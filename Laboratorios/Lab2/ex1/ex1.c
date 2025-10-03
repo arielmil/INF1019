@@ -73,6 +73,9 @@ int main(void) {
 
     // Cria segmento de memória compartilhada
     int shmid = shmget(IPC_PRIVATE, 27 * sizeof(int), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR); // Read-write pelo dono, cria se não existe, falha se existe.
+    
+    // OBS: Ver qual é a diferença de colocar IPC_PRIVATE se já coloco IPC_CREAT em __shmflg
+
     if (shmid < 0) {
         perror("Erro ao criar segmento de memória compartilhada.");
         exit(1);
