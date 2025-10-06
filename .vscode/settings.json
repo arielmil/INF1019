@@ -4,6 +4,8 @@
         "stdio.h": "c",
         "shm.h": "c",
         "stat.h": "c",
-        "stdlib.h": "c"
+        "stdlib.h": "c",
+        "unistd.h": "c",
+        "ipc.h": "c"
     }
 }

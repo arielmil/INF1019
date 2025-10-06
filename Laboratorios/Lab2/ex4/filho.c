@@ -3,8 +3,8 @@
 #include <stdlib.h> // Para exit NULL e rand()
 #include <sys/ipc.h> // Para flags IPC_CREAT, IPC_EXCL, IPC_NOWAIT e estrutura ipc_perm
 #include <sys/stat.h> // Para flags de permissão
-#include <unistd.h> // Para sleep
-#include <string.h> // Para strcmp
+#include <unistd.h> // Para sleep()
+#include <string.h> // Para strcmp()
 #include "struct.h" // Para pai e filho poderem referenciar a struct
 
 int main(int argc, char *argv[]) {

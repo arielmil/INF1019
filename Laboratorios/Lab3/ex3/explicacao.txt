@@ -1,0 +1,34 @@
+SIGCHLD: Sinal recebido quando o filho de um processo é terminado.
+
+filho1 e filhos2: Começam a rodar, e dormem com sleep() 5 e 15 segundos respectivamente
+
+Função pause():
+
+    Pausa o processo até que este receba um sinal que o termine, ou cause a sua continuação através de um sinal que não é ignorado e é tratado.
+
+Função sleep(): 
+    
+    É similar a uma função pause(), porém sleep() recebe um parametro inteiro time que despausa o processo depois de time segundos passarem,
+    mesmo que nenhum outro processo tenha enviado um sinal para o processo dormindo.
+
+filhocidio:
+
+    Processo começa sinalizando que SIGCHLD recebidos serão tratados pela função childhandler().
+
+    Posteriormente faz um fork() aonde:
+
+    Na area do filho:
+
+    	Usa execve passando como argumento útil essencialmente apenas o nome do programa (filho1 ou filho2) que será executado no contexto do processo filho através de uma substituição e context para o processo chamado. Os argumentos possíveis válidos são filho1 ou filho2 que dormem respectivamente 5 ou 15 segundos.
+
+    
+   Na area do pai:
+
+	Pega de argv[1] que é um argumento representando um número em segundos o seu valor,
+	e o atribui a váriavel delay.
+	
+	Depois usa sleep() passando delay como tempo a dormir.
+
+	Ao passarem delay segundos, o processo desperta e envia o sinal SIGKILL para o processo filho.
+
+	Caso o processo filho termine de rodar antes de delay segundos passarem, ele enviará um SIGCHLD para o processo pai sinalizando sua terminação, após isso o pai ira tartar SIGCHLD através de childhandler que ira printar uma mensagem indicando que o processo filho foi terminado antes de delay segundos passarem.
