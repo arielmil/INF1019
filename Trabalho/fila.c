@@ -19,7 +19,7 @@ void init(Fila *fila) {
 }
 
 int empty(Fila *fila) {
-    return fila->size == 0;
+    return (fila->size) == 0;
 }
 
 void push(Fila *fila, pid_t pid) {

@@ -8,6 +8,7 @@
         "unistd.h": "c",
         "ipc.h": "c",
         "fcntl.h": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "time.h": "c"
     }
 }

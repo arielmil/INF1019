@@ -1,68 +1,69 @@
 #include <stdio.h>
 #include <stdlib.h> // Para exit e NULL
-#include <sys/shm.h> // Para shmget(), shmat(), shmdt() e shmctl()
 #include <unistd.h> // Para getpid() e usleep()
-#include <string.h> // Para strcpy() e strcmp()
 #include <time.h> // Para time()
 #include <fcntl.h> // Para flags de controle de FIFO.
-
 #include "info.h"
 
-// OBS: argv[0]: ./process, argv[1]: shmId, argv[2]: processNumber
+/* OBS: Usarei duas FIFOS para IPC entre process e KS:
+
+        FIFOAN1 é usada para indicar qual dispositivo process está tentando acessar:
+
+            1: Dispositivo D1
+            2: Dispositivo D2
+
+        FIFOAN2 é usada para indicar qual operação process deseja fazer no dispositivo selecionado:
+
+            'R': Leitura
+            'W': Escrita
+            'X': Execução
+
+        KS deve atualizar o campo PC sempre que receber mensagens por uma das duas FIFOS,
+        porém deve apenas atualizar os campos timesD1acessed e timesD2acessed se uma mensagem por FIFO2 for enviada.
+*/
+
+// OBS: argv[0]: ./process, argv[1]: processNumber
 int main(int argc, char *argv[]) {
-    int PC = 0;
     char D, Op;
+
+    int PC = 0;
     int d;
-    int fifo;
-    int shmId;
+    int fifoan1, fifoan2;
     int processNumber; // [1..5]
-    char *mensagem;
+
+    pid_t pid = getpid();
     
-    if (argc < 3) {
+    if (argc < 2) {
         perror("Erro: Processo não recebeu o número de argumentos necessários. Saindo...\n");
-        exit(-1);
+        _exit(-1);
     }
 
-    shmId = atoi(argv[1]); // Pega o shmemId do kernel que criou uma struct em shmem para cada um dos 5 processos.
-    processNumber = atoi(argv[2]);
+    processNumber = atoi(argv[1]);
 
-    Info *info = (Info *) shmat(shmId, NULL, 0);
-    if (info == (void *) -1) {
-        perror("Erro ao anexar segmento de memória compartilhada. Saindo...\n");
-        // Desanexa o segmento de memória compartilhada em caso de erro
-        exit(-2);
+    fifoan1 = open("FIFOAN1", O_WRONLY); // Abre uma FIFO em modo de escrita bloqueante para sinalizar ao kernel a espera de IRQ0
+    if (fifoan1 < 0) {
+        perror("Erro ao abrir a FIFO 'FIFOAN1' para escrita. Saindo...\n");
+        _exit(-2);
     }
 
-    fifo = open("FIFOAN", O_WRONLY); // Abre uma FIFO em modo de escrita bloqueante para sinalizar ao kernel a espera de IRQ1 e IRQ2
-    if (fifo < 0) {
-        perror("Erro ao abrir a FIFO 'FIFOAN' para escrita. Saindo...\n");
-        shmdt(info);
-        exit(-3);
+    fifoan2 = open("FIFOAN2", O_WRONLY); // Abre uma FIFO em modo de escrita bloqueante para sinalizar ao kernel a espera de IRQ0
+    if (fifoan2 < 0) {
+        perror("Erro ao abrir a FIFO 'FIFOAN2' para escrita. Saindo...\n");
+        close(fifoan1);
+        _exit(-3);
     }
 
-    char buffer[] = "Processo N esperando por um IRQX";
-    mensagem = (char *)malloc(sizeof(char) * sizeof(buffer));
-    if (mensagem == NULL) {
-        perror("Erro ao fazer malloc. Saindo...");
-        exit(-4);
-    }
-
-    strcpy(mensagem, buffer);
-
-    info->lastOp = 0; // Nenhuma operação feita ainda
-    info->lastD = 0; // Nenhum D foi usado ainda
-    info->PC = 0;
-    info->pid = getpid();
-
-    srand((unsigned)(info->pid ^ time(NULL))); // Para seedar a função rand() 
+    srand((unsigned)(pid ^ time(NULL))); // Para seedar a função rand() 
 
     while (PC < MAX) {
         usleep(500000);
         
-        d = rand()%100 +1;
-        printf("Valor de d: %d em AN: %ld\n", d, (long) info->pid);
+        d = (rand()%100) +1;
+        printf("Valor de d: %d em A%d (pid: %ld)\n", d, processNumber, (long) pid);
 
         if (d < 15) { // generate a random syscall
+            // Prob de ocorrencia de 15%
+
             if (d % 2 == 0) {
                 D = '1';
             }
@@ -70,8 +71,6 @@ int main(int argc, char *argv[]) {
             else  {
                 D = '2';
             }
-
-            info->lastD = D;
 
             if (d % 3 == 0) {
                 Op = 'R';
@@ -85,25 +84,25 @@ int main(int argc, char *argv[]) {
                 Op = 'X';
             }
 
-            info->lastOp = Op;
+            // Escreve em FIFO1 o disp usado e em FIFO2 qual a op para simular syscall
+            // Isso deve desviar o fluxo de controle para KS
+            printf("[Processo %d]: Dispositivo acessado: %c com operacao: %c.\n", processNumber, D, Op);
+            write(fifoan1, D, 1);
+            write(fifoan2, Op, 1);
 
-            mensagem[9] = processNumber + '0';
-            mensagem[31] = D;
+        }
 
-            write(fifo, mensagem, strlen(mensagem) + 1);
+        else {
+            // Prob de ocorrencia de 75%
+            printf("[Processo %d]: Esperando seu tempo de rodar acabar.\n", processNumber);
         }
 
         PC++;
-        info->PC = PC;
-
-        //Colocar mensagem de print
-
         usleep(500000);
     }
 
-    free(mensagem);
-    close(fifo);
-    shmdt(info);
+    close(fifoan1);
+    close(fifoan2);
 
-    return 0;
+    _exit(0);
 }
