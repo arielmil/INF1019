@@ -1,4 +1,3 @@
-#include "info.h"
 #include <stdio.h>
 #include <stdlib.h> // Para exit e NULL
 #include <sys/shm.h> // Para shmget(), shmat(), shmdt() e shmctl()
@@ -6,9 +5,8 @@
 #include <string.h> // Para strcpy() e strcmp()
 #include <time.h> // Para time()
 #include <fcntl.h> // Para flags de controle de FIFO.
-#include <signal.h> // Para Sigstop
 
-#define MAX 30
+#include "info.h"
 
 // OBS: argv[0]: ./process, argv[1]: shmId, argv[2]: processNumber
 int main(int argc, char *argv[]) {
@@ -93,12 +91,12 @@ int main(int argc, char *argv[]) {
             mensagem[31] = D;
 
             write(fifo, mensagem, strlen(mensagem) + 1);
-            raise(SIGSTOP);
-
         }
 
         PC++;
         info->PC = PC;
+
+        //Colocar mensagem de print
 
         usleep(500000);
     }

@@ -6,6 +6,8 @@
         "stat.h": "c",
         "stdlib.h": "c",
         "unistd.h": "c",
-        "ipc.h": "c"
+        "ipc.h": "c",
+        "fcntl.h": "c",
+        "string.h": "c"
     }
 }
