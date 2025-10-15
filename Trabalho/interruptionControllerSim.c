@@ -72,7 +72,7 @@ int main(int argc, char *argv[]) {
     shmIdICS = atoi(argv[2]);
 
     shmICSptr = (int*) shmat(shmIdICS, NULL, 0);
-    if (shmICSptr < 0) {
+    if (shmICSptr == (void *) -1) {
         perror("[ICS]: Erro ao usar shmat para shmICSptr. Saindo...");
         _exit(-31);
     }
@@ -82,6 +82,7 @@ int main(int argc, char *argv[]) {
         info[i] = (Info *)shmat(shmICSptr[i], NULL, 0);
     }
 
+    signal(SIGINT, interruptHandler);
     signal(SIGUSR1, sigusr1Hanlder);
     signal(SIGINT, sigusr1Hanlder);
 
@@ -91,7 +92,7 @@ int main(int argc, char *argv[]) {
         usleep(500000);
         
         // Enviar SIGUSR1 para desvia o fluxo para cá
-        kill(ks_pid, IRQ0);
+        kill(ks_pid, SIG_IRQ0);
 
         d = (rand()%1000) +1;
 
@@ -100,13 +101,13 @@ int main(int argc, char *argv[]) {
             // Chance de 0.5% de ocorrencia
             if (d <= 5) {
                 // Enviar SIGUSR1 para desvia o fluxo para cá
-                kill(ks_pid, IRQ2);
+                kill(ks_pid, SIG_IRQ2);
             }
 
             // Chance de 10% de ocorrencia
             else {
                 // Enviar SIGUSR1 para desvia o fluxo para cá
-                kill(ks_pid, IRQ1);
+                kill(ks_pid, SIG_IRQ1);
             }
         }
     }

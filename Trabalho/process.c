@@ -87,8 +87,8 @@ int main(int argc, char *argv[]) {
             // Escreve em FIFO1 o disp usado e em FIFO2 qual a op para simular syscall
             // Isso deve desviar o fluxo de controle para KS
             printf("[Processo %d]: Dispositivo acessado: %c com operacao: %c.\n", processNumber, D, Op);
-            write(fifoan1, D, 1);
-            write(fifoan2, Op, 1);
+            write(fifoan1, &D, 1);
+            write(fifoan2, &Op, 1);
 
         }
 

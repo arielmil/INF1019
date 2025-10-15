@@ -53,17 +53,17 @@ int getProcessNumber(pid_t pid, PD *pd) {
 }
 
 void irq0Handler(int signum) {
-    lastSignal = IRQ0;
+    lastSignal = SIG_IRQ0;
     return;
 }
 
 void irq1Handler(int signum) {
-    lastSignal = IRQ1;
+    lastSignal = SIG_IRQ1;
     return;
 }
 
 void irq2Handler(int signum) {
-    lastSignal = IRQ2;
+    lastSignal = SIG_IRQ2;
     return;
 }
 
@@ -133,7 +133,7 @@ int main(void) {
     }
 
     shmICSptr = (int *)shmat(shmIdICS, NULL, 0);
-    if (shmIdProcess[i] < 0) {
+    if (shmICSptr == (void *) -1) {
         perror("[KernelSim]: Erro ao anexar região de memória compartilhada para ICS. Saindo...");
         exit(-30);
     }    
@@ -216,9 +216,9 @@ int main(void) {
     }
 
     // A partir daqui apenas o pai roda, pos todos os filhos estão executando cada um seu código
-    signal(IRQ0, irq0Handler);
-    signal(IRQ1, irq1Handler);
-    signal(IRQ2, irq2Handler);
+    signal(SIG_IRQ0, irq0Handler);
+    signal(SIG_IRQ1, irq1Handler);
+    signal(SIG_IRQ2, irq2Handler);
 
     Fila ready;
     Fila waitingD1;
@@ -277,12 +277,13 @@ int main(void) {
                 Se PC >= MAX, não faz nada com este processo (Não o coloca novamente na fila de prontos)
     */
     
+    terminatedProcessess = 0;
     while(terminatedProcessess < 5) {
         currentProcess = pop(&ready);
 
         // Pega a região da shmem específica para o processo atual
         processNumberValue = getProcessNumber(currentProcess, pd);
-        currentInfo = info[processNumberValue];
+        currentInfo = info[processNumberValue - 1];
 
         //Manda um sinal para o ICS para indicar o inicio da contagem de um dt de 0.5 segundos
         //ICS mandara um sinal IRQ0 em 0.5 segs sinalizando que currentProcess deve ser interrompido
@@ -324,7 +325,7 @@ int main(void) {
             if (bufferan1 == '1') {
                 // Dispositivo 1 acessado
                 currentInfo->timesD1Acessed++;
-                currentInfo->state = IRQ1;
+                currentInfo->state = SIG_IRQ1;
 
                 // Coloca currentProcess na fila de espera para D1
                 push(&waitingD1, currentProcess);
@@ -333,10 +334,10 @@ int main(void) {
             else {
                 // Dispositivo 2 acessado
                 currentInfo->timesD2Acessed++;
-                currentInfo->state = IRQ2;
+                currentInfo->state = SIG_IRQ2;
 
                 // Coloca currentProcess na fila de espera para D2
-                push(&waitingD1, currentProcess);
+                push(&waitingD2, currentProcess);
             }
 
             currentInfo->lastD = bufferan1;
@@ -380,11 +381,11 @@ int main(void) {
         //Tratamentos de sinais de ICS
 
         // Controle voltou para KS devido a um IRQ gerado por IC
-        if (lastSignal == IRQ0 || lastSignal == IRQ1 || lastSignal == IRQ2) {
+        if (lastSignal == SIG_IRQ0 || lastSignal == SIG_IRQ1 || lastSignal == SIG_IRQ2) {
             if (currentInfo->state != TERMINATED) {
                 //Processo volta a ser escalonado pois currentProcess.PC < MAX
                 
-                if (lastSignal == IRQ0) {
+                if (lastSignal == SIG_IRQ0) {
                     test = kill(currentProcess, SIGSTOP);
                     if (test == -1) {
                         perror("[KernelSim]: Erro ao mandar um SIGSTOP para algum AN. Saindo...");
@@ -393,7 +394,7 @@ int main(void) {
 
                 }
 
-                else if (lastSignal == IRQ1) {
+                else if (lastSignal == SIG_IRQ1) {
                     if (!empty(&waitingD1)) {
                         currentProcess = pop(&waitingD1);
                     }
@@ -406,7 +407,7 @@ int main(void) {
                 }
 
                 // Atualiza currentInfo, pois pode se tratar de outro process
-                currentInfo = info[processNumberValue];
+                currentInfo = info[processNumberValue - 1];
 
                 if (currentInfo->state != TERMINATED) {
                     push(&ready, currentProcess);

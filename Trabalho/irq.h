@@ -1,3 +1,3 @@
-#define IRQ0 0
-#define IRQ1 1
-#define IRQ2 2
+#define SIG_IRQ0 SIGUSR1   // ALTERAÇÃO: IRQ0 -> SIGUSR1
+#define SIG_IRQ1 SIGUSR2   // ALTERAÇÃO: IRQ1 -> SIGUSR2
+#define SIG_IRQ2 SIGALRM   // ALTERAÇÃO: IRQ2 -> SIGALRM
