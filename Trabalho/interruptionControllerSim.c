@@ -1,114 +1,98 @@
-#include <unistd.h> // Para getpid() e usleep()
-#include <stdlib.h> // Para NULL e _exit
-#include <time.h> // Para time()
-#include <sys/shm.h> // Para shmat()
-#include <sys/types.h> // Para tipos como pid_t
-#include <signal.h> // Para tratamento de sinais
 #include <stdio.h>
-#include "info.h"
+#include <stdlib.h>     // Para exit
+#include <unistd.h>     // Para sleep, getpid
+#include <signal.h>     // Para kill, signal
+#include <time.h>       // Para srand, rand
+#include <sys/ipc.h>    // Para shmget
+#include <sys/shm.h>    // Para shmat, shmdt
+#include <sys/types.h>  // Para pid_t
+
 #include "irq.h"
+#include "info.h"
 
-Info *info[5];
+// argv[1] = pid do KernelSim
+// argv[2] = shmid da tabela Info[5]
 
-void sigusr1Hanlder(int signum) {
-    // Feito apenas para desviar o fluxo novamente para ICS.
-    int a = 1;
-    return;
+static volatile sig_atomic_t snapshotFlag = 0; // CORREÇÃO: dispara UM snapshot por Ctrl-C
+
+void sigint_handler(int signo) {
+    snapshotFlag = 1;
 }
 
-void interruptHandler(int signum) {
-    // Faz o briefing
-    char c;
-
-    char state; // 0: Interrompido por IRQ0, 1: Esperando Por IRQ1, 2: Esperando por IRQ2, 3: Rodando, 4: Terminado
-    char lastD; // 1 para D1 ou 2 para D2
-	char lastOp; // Qual foi a última operação que este processo fez em D1 ou D2
-    int PC; // Contador de Programa
-    int timesD1Acessed; // Quantas vezes D1 foi acessado por processo com esta pid
-    int timesD2Acessed; // Quantas vezes D2 foi acessado por processo com esta pid
-    pid_t pid; //Qual o pid do processo
-
-    printf("[ICS]: Briefing do estado de todos os processos AN:\n");
-    for (int i = 0; i < 5; i++) {
-
-        state           = info[i]->state;
-        lastD           = info[i]->lastD;
-        lastOp          = info[i]->lastOp;
-        PC              = info[i]->PC;
-        timesD1Acessed  = info[i]->timesD1Acessed;
-        timesD2Acessed  = info[i]->timesD2Acessed;
-        pid             = info[i]->pid;
-
-        printf("Processo %d de PID %d:\n"
-               "Estado: %c\n"
-               "Ultimo dispositivo acessado: %c\n"
-               "Ultima operacao feita no dispositvo: %c\n"
-               "PC: %d\n"
-               "Quantidade de vezes que acessou D1: %d\n"
-               "Quantidade de vezes que acessou D2: %d.\n\n",
-               i + 1, (int)pid, state, lastD, lastOp, PC, timesD1Acessed, timesD2Acessed);
-    }
-
-    printf("Digite qualquer coisa para continuar...\n");
-    scanf("%c", &c);
-    return;
-}
-
-//argv[1]: pid de kernelSim, argv[2]: shmIdICS
 int main(int argc, char *argv[]) {
-    int shmIdICS;
-    int i;
-    int d;
-    int *shmICSptr;
-
-    pid_t ks_pid;
-    
     if (argc < 3) {
-        perror("[ICS]: Erro: ICS não recebeu o número de argumentos necessários. Saindo...\n");
-        _exit(-29);
+        fprintf(stderr, "[ICS]: uso: %s <pid-kernel> <shmid-info>\n", argv[0]);
+        exit(-1);
     }
 
-    ks_pid = (pid_t) atoi(argv[1]);
-    shmIdICS = atoi(argv[2]);
+    pid_t ks_pid = (pid_t) atoi(argv[1]);
+    int shmid = atoi(argv[2]);
 
-    shmICSptr = (int*) shmat(shmIdICS, NULL, 0);
-    if (shmICSptr == (void *) -1) {
-        perror("[ICS]: Erro ao usar shmat para shmICSptr. Saindo...");
-        _exit(-31);
+    signal(SIGINT, sigint_handler); // CORREÇÃO: Ctrl-C gera snapshot único
+
+    Info *info = (Info *) shmat(shmid, NULL, 0);
+    if (info == (void *) -1) {
+        perror("[ICS]: erro ao shmat tabela de estados");
+        exit(-2);
     }
 
-    // Pega todos os Infos de cada processo para fazer o briefing caso seja interrompido por Ctrl-C
-    for (i = 0; i < 5; i++) {
-        info[i] = (Info *)shmat(shmICSptr[i], NULL, 0);
-    }
+    srand((unsigned int) (getpid() ^ time(NULL)));
 
-    signal(SIGINT, interruptHandler);
-    signal(SIGUSR1, sigusr1Hanlder);
-    signal(SIGINT, sigusr1Hanlder);
+    while (1) {
+        if (snapshotFlag == 1) {
+            // CORREÇÃO: imprime uma vez, no formato do usuário, e espera scanf para continuar
+            printf("[ICS]: Briefing do estado de todos os processos AN:\n");
+            int i = 0;
+            while (i < 5) {
+                int state = info[i].state;
+                char lastD = info[i].lastD;
+                char lastOp = info[i].lastOp;
+                int PC = info[i].PC;
+                int timesD1Acessed = info[i].timesD1Acessed;
+                int timesD2Acessed = info[i].timesD2Acessed;
+                pid_t pid = info[i].pid;
 
-    srand((unsigned)(getpid() ^ time(NULL))); // Para seedar a função rand()
+                // CORREÇÃO: 'state' é numérico; imprimir como caractere '0'..'4' para manter o %c do seu formato
+                char stateChar = (char) ('0' + (state & 0xF));
 
-    while(1) {
-        usleep(500000);
-        
-        // Enviar SIGUSR1 para desvia o fluxo para cá
-        kill(ks_pid, SIG_IRQ0);
+                printf("Processo %d de PID %d:\n"
+                       "Estado: %c\n"
+                       "Ultimo dispositivo acessado: %c\n"
+                       "Ultima operacao feita no dispositivo: %c\n"
+                       "PC: %d\n"
+                       "Quantidade de vezes que acessou D1: %d\n"
+                       "Quantidade de vezes que acessou D2: %d.\n\n",
+                       i + 1, (int) pid, stateChar, lastD, lastOp, PC, timesD1Acessed, timesD2Acessed);
 
-        d = (rand()%1000) +1;
-
-        if (d <= 100) {
-
-            // Chance de 0.5% de ocorrencia
-            if (d <= 5) {
-                // Enviar SIGUSR1 para desvia o fluxo para cá
-                kill(ks_pid, SIG_IRQ2);
+                i = i + 1;
             }
 
-            // Chance de 10% de ocorrencia
-            else {
-                // Enviar SIGUSR1 para desvia o fluxo para cá
+            printf("Digite qualquer coisa para continuar...\n");
+            char c;
+            scanf(" %c", &c);
+            snapshotFlag = 0;
+
+        } 
+        
+        else {
+            // Geração de IRQs (mesma lógica)
+            usleep(500000);
+            kill(ks_pid, SIG_IRQ0);
+
+            int p = (rand() % 1000) + 1;
+            if (p < 100) {
+                // Chance de 10%
                 kill(ks_pid, SIG_IRQ1);
+            }
+
+            if (p < 5) {
+                // Chance de 0.5%
+                kill(ks_pid, SIG_IRQ2);
             }
         }
     }
+
+    // Não chegamos aqui normalmente
+    shmdt(info);
+    return 0;
 }
