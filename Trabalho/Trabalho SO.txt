@@ -1,0 +1,150 @@
+Trabalho SO:
+
+	A1, A2, A3, A4, A5:
+	
+		- 5 Processos que podem fazer operações de E/S nos dispositivos de E/S D1 e D2
+		- Qualquer processo AN pode executar ininterruptamente no máximo durante dt segundos.
+		- Ao término dos dt segundos de execução de um processo AN, este deve ser interrompitdo por um SIGSTOP pelo KS
+		- Quando um processo Ax for interrompido por um SIGSTOP, outro processo Ay deve ser escolhido para continuar
+		  a menos que o processo Ay esteja esperando por um retorno de uma operação de E/S para D1 ou D2.
+		  
+		- Cada AN deve ser implementado como um loop de até MAX iterações, e ter um contador de iterações chamado de ProgramCounter (PC).
+		- Durante o loop, AN deve dormir por 1 seg (possívelmente separado em seções de 0.5 segs),
+		  E uma chance aleatória de baixa probabilidade de AN requisitar uma syscall para leitura ou escrita (Read/Write) em D1 ou D2.
+		  A escolha do dispositivo, assim como de qual operação for ser feita (Read (R), Write (W), Execute (X)) também são aleatórias
+
+	D1, D2:
+	
+		- Dois dispositivos de E/S (Entrada / Saída) implementados como FIFOS (named pipes) para que os AN possam interagir com eles.
+
+	KernelSim (KS):
+	
+		Um processo infinito simulador de Kernel que gerencia os processos AN escalonando-os,
+		de acordo com uma politica de escalonamento RoundRobin com fatia de tempo (dt) fixa
+		
+		Além de escalonar os processos AN usando um dt fixo, 
+		ele deve também fazer o escalonamento de acordo com o estado de cada processo,
+		isto é: Se um determinado processo AN está esperando o término de uma operação de E/S
+		dos dispositivos D1 ou D2, ele deve ser interrompido até que a operação de E/S seja terminada,
+		após isso, o processo AN deve ser colocado novamente numa fila de prontos para ser posteriormente escalonado novamente.
+		
+
+	InterControllerSim (ICS): 
+
+		Processo infinito que roda em paralelo com KernelSim, 
+		e gera interrupções referentes as fatias de tempo que cada processo AN tem para rodar,
+		e ao término de operações de entrada e saída nos dispositivos D1 e D2.
+
+		Nele, em relação a um dos processos AN:
+		
+			- A interrupção IRQ0 indica o término de uma fátia de tempo para o processo
+			- A interrupção IRQ1 indica o término de uma operação de E/S para o dispositivo D1
+			- A interrupção IRQ2 indica o término de uma operação de E/S para o dispositivo D2
+			
+			- ICS deve poder ser interrompido e reiniciar do ponto em que parou através do uso de sinais de interrupção (Ctrl-C) pela linha de comando.
+			  Enquanto estiver parado, deve mostrar as seguintes informações sobre todos os processos AN:
+			  
+			  - Valor do PC
+			  - Em que estado está (Rodando, terminado, interrompido por IRQ0, esperando a volta de uma chamada de systema para D1 ou D2 e para qual dispositivo foi feita a chamada, e qual foi a operação)
+			  - Desde o ínicio da execução do processo até o valor atual de PC dele, quatas vezes o processo já acessou cada um dos dispositivos para qualquer operação
+			
+			- Caso dois processos Ay e Az tenham feito uma chamada de E/S para o mesmo dispositivo DN (D1 ou D2),
+		      e estejam esperando o retorno dessa operação, o primeiro IRQN sinalizará o término da primeira chamada de E/S,
+			  e desbloqueará o primeiro processo que fez esta chamada, e o segundo IRQN sinalizará o término da segunda chamda de E/S,
+			  e desbloqueará o segundo processo que fez essa chamda.
+			  
+			  Por exemplo, caso A3 tenha feito a chamada de E/S antes de A4 para D2, o primeiro IRQ2 representará o término da operação de leitura e escrita de A3,
+			  e desbloqueará A3 para ser escalonado novamente (ser colocado na fila de prontos), e o segundo IRQ2 representará o término da operação de E/S de A4,
+			  e desbloqueará A4 para ser escalonado novamente.
+			  
+			  Quando um processo AN executar uma syscall para E/S em DM, isso faz com que ele seja imediatamente interrompido pelo KS através de um SIGSTOP,
+			  e KS insere AN numa fila de processos bloqueados á espera de DM.
+			  Eventualmente ICS irá gerar um IRQ2 que causará a liberação do primeiro processo nessa fila.
+			  
+			  Isso irá continuar até que AN seja liberado desta fila, pois já chegou a vez dele de usar DM para E/S, e ele já usou e foi liberado.
+			  
+			  Um dt tem exatamente 500 ms (0.5s), ou seja, a cada 500ms, deve ser gerado um IRQ0 para o processo AN que estiver executando, e ele deve ser interrompido.
+			  
+			  - IRQ0 deve ser gerado a cada dt.
+			  
+			  IRQ1 e IRQ2 são executados de acordo com uma probabilidade:
+			  
+				- IRQ1 tem uma probabilidade de 0.1 (10%) de ser executado a cada dt
+				- IRQ2 tem uma probabilidade de 0.005 (0.5%) de ser executado a cada dt
+			  
+			  (usar sleep dentro do ICS para simular as 3 IRQs)
+			  
+			  OBS: Caso as frequencias de interrupção estiverem dificultando a visualização da execução do sistema escalonatório,
+			  pode-se alterar o valor da fatia de tempo, e alterar as probabilidades de ocorrencia de IRQ1 e IRQ2, mas sempre mantendo IRQ1 com uma probabilidade 20x maior de ocorrer do que IRQ2.
+			  Na prática, isso deve fazer com que IRQ1 ocorra uma média de 
+			  20x mais do que IRQ2, e isso é feito dessa forma para simular a velocidade de E/S de IRQ1 ser 20x maior do que a de IRQ2.			
+	
+	As interrupções geradas pelo ICS devem ser tratadas pelo KS, e elas podem ser feitas usando qualquer mecanismo de comunicação IPC
+	como pipes, memória compartilhada ou FIFO, e devem usar os sinais SIGSTOP e SIGCONT para permitir que o KernelSim interrompa,
+	e retome posteriormente, a execução dos processos AN.
+	
+	
+	Troca de contexto:
+	
+		Ao ser feita uma troca de contexto devida a interrupção de um processo, e a esalação de outro,
+		o contexto do processo AN, isto é as váriaveis e os valores dele, devem ser salvos pelo KS para serem restaurados quando AN for escalonado novamente.
+		Como cada processo consiste apenas de um loop com PC < MAX iterações, apenas o valor de PC, e a informação de qual era esse processo (A1, A2, ..., A5)
+		devem ser salvos (PC representa quantas iterações o processo AN já fez)
+		Porém, caso o processo seja interrompido devido a uma chamada de sistema, os parametros dessa chamada (Qual dispositivo foi selecionado para esta chamada, e qual operação será feia nele),
+		também devem fazem parte do contexto de cada processo, e devem ser salvos durante este tipo de interrupção, junto com o PC,
+		para serem restaurados posteriormente.
+	
+	Dúvidas: 
+	
+		- Como implementar D1 e D2, o que uma operação de execute faz em D1 ou D2?
+		- Para que serve o sleep dentro do corpo do loop de cada AN, e este pode ser feito com sleep(1s) direto, ao invés de dois sleeps(0.5)?
+		- Cada AN deve ser o mesmo programa iterado? Ou seja, ter o mesmo valor de MAX iterações?
+		- Como eu devo implementar a troca de contexto, se um SIGCONT e um SIGSTOP já fazem isso sozinho usando o kernel do sistema?
+		- Quando uma iterrupção ocorrer, como faço para mandar o processo de volta para a linha de código que ele estava antes da interrupção e com o contexto restaurado?
+	
+	
+	Fluxo geral:
+	
+	
+		1: KS começa a rodar, 
+		2: KS faz um fork e executa ICS como seu filho (Implementando antes o handler da interrupção Ctrl-C para seu filho para ser herdado pelo fork),
+		3: ICS começa a rodar
+		4: KS faz um loop de 5 iterações com 5 forks, executa cada AN (A1...A5) passando como argumento o número N de cada processo durante o exec, e pausa todos eles após começarem a executar
+		5: O fluxo de execução do pai do programa auxiliar termina
+		6: A partir deste momento, todos os processos já estão em execução, então:
+		
+		7: KS coloca todos os 5 programas na fila de prontos em uma ordem aleatória
+		8: KS da um pop da fila de prontos, e escalona este processo até ele ser interrompido por IRQ0, IRQ1 ou IRQ2 pelo ICS, e ter o seu contexto salvo de acordo com cada caso
+		9: Caso o processo tenha sido interrompido por um IRQ0, ele deve imediatamente voltar para a fila de prontos, a menos que seu valor de PC seja maior ou igual que MAX iterações. Neste caso, ele deve ser terminado com um SIGTERM
+		10: Caso tenha sido interrompido por uma chamada de systema para D1 ou D2, ele deve ir para uma fila de espera especifica para cada um dos dispositivos
+		   Caso isso aconteça, o processo só saira dessa fila ao chegar uma IRQ1 para D1, ou IRQ2 para D2, sinalizando que um processo que estaja na correspondente pode ser popado dela, e colocado novamente na fila de prontos
+		
+		11: Volta para o passo número 8 até que:
+		
+			12: Usuário interrompeu ICS com Cntrl-C (SIGINT), neste caso, devem ser mostradas as informações de cada processo até que o usuário aperte qualquer tecla (durante um input de usuário), então o fluxo volta aos passos 7-->10
+			13: Todos os 5 processos já foram terminados. Para isso, KS deve ter uma váriavel char processosTerminados que começa em 0 e vai até 5.
+			   Quando o valor desta váriavel estiver em 5, KS deve terminar também ICS e terminar a sí mesmo, mas não antes de fechar todos os pipes FIFOS, e shmem que estiverem sendo usadas pela aplicação.
+		   
+		   
+	Observações extras:
+	
+		- Cada um dos 5 processos deve possuir uma shmem em comum com o kernel, sendo uma struct contendo:
+		
+			pid_t pid //Qual o pid do processo
+			int lastOp // Qual foi a última operação que este processo fez em D1 ou D2
+			int PC // Contador de programa
+			char state // 0: Interrompido por IRQ0, 1: Esperando Por IRQ1, 2: Esperando por IRQ2, 3: Rodando, 4: Terminado
+			
+			
+			  - Em que estado está (Rodando, terminado, interrompido por IRQ0, esperando a volta de uma chamada de systema para D1 ou D2 e para qual dispositivo foi feita a chamada, e qual foi a operação)
+			  - Desde o ínicio da execução do processo até o valor atual de PC dele, quatas vezes o processo já acessou cada um dos dispositivos para qualquer operação
+			
+			Com isso, pode ser feito o briefing requisitado pelo enunciado do trabalho
+		
+		- D1 e D2 devem ser FIFOS criadas pelo Kernel apenas para A1...A5 poderem realmente usarem read / write / execute em FIFOS com nomes de D1 ou D2.
+		
+		- SIGUSR1 é enviado pelo KS para ICS para indicar o inicio da contagem dt de 0.5 segundos
+		- SIGUSR2 é enviado pelo KS para ICS para indicar o inicio de uma operação de E/S
+		
+		Caso um SIGUSR2 seja enviado, é necessário que antes disso o kernel escreva numa shmem o dispositivo que será ativado (1 ou 2), para que ICS gere uma interrupção adequada para cada caso, como explicado acima. 
+		

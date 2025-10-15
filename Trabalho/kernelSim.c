@@ -6,7 +6,6 @@
 #include <sys/types.h> // Para tipos como pid_t
 #include <fcntl.h> // Para flags de controle de FIFO.
 #include <signal.h> // Para tratamento de sinais
-#include <sys/queue.h> // Para uso de filas
 #include <unistd.h> // Para pause()
 #include <errno.h> // CORREÇÃO: para tratar EAGAIN em leituras non-blocking
 
@@ -20,13 +19,13 @@
 
     Quando um process fizer alguma syscall simulada para D1 ou D2, enviar uma mensagem para kernelSim através de um SIGUSR1
     kernelSim então deve olhar para a shmem deste process para verificar qual tipo de operação será feita e para qual dispositivo.
-    KernelSim deve então mandar uma mensagem (decidir a melhor forma) para ICS para sinalizar a operação, o dispositivo sendo requisitado, e qual processo (numero do processo e talvez pid) fez essa requisição
+    KernelSim deve então mandar uma mensagem (decidir a melhor forma) para ICS (via fifo) informando qual processo (numero do processo e talvez pid) fez essa requisição
     
     O controle deve ser desviado então para ICS que deve tratar a interrupção adequadamente
 
     Fazer a parte de interação entre kernelSim e ICS para as interrupções de fatia de tempo (IRQ0)
     
-    Passar para kernelSim através de um Pipe, todas as keys de shmem de cada processo para que ele possa exibir as informações pedidas quando interrompido com ctrl-c (Ver se precisa)
+    Passar para kernelSim através de um Pipe, todas as keys de shmem de cada AN, e a key de ICS, para ele conseguir printar as informações pedidas quando interrompido com ctrl-c (Ver se precisa)
 
     Trocar a lógica de mexer na estrutura info no kernelSim, e o process faz o request,
     ao invés do process em sí mexer direto na estrutura, process apenas faz o request para KS fazer isso.
@@ -38,64 +37,160 @@ int lastSignal = -1;
 
 typedef struct processDictionary {
     pid_t pid;
-    int processNumber; // CORREÇÃO: faltava ';' ao final do campo
-} PD; // CORREÇÃO: typedef finalizado corretamenteD;
+    int number;
+} PD;
 
-int getProcessNumber(pid_t pid, PD *pd) {
+int getProcessNumber (pid_t pid, PD pd[5]) {
+
     for (int i = 0; i < 5; i++) {
-        PD current = pd[i];
-        if (current.pid == pid) {
-            return current.processNumber;
+
+        if (pd[i].pid == pid) {
+            return pd[i].number;
         }
     }
 
-    perror("[KernelSim - getProcesssNumber]: Erro ao tentar encontrar o processNumber de um processo. Saindo...");
-    exit(-21);
+    return -1; // Erro
+
 }
 
-void irq0Handler(int signum) {
-    lastSignal = SIG_IRQ0;
-    return;
+// A fila a seguir é a dos processos prontos para serem posteriormente escalonados.
+// Foi uma decisão de projeto utilizada para facilitar o escalonamento, mas não é parte da especificação do trabalho.
+Fila ready;
+
+/*
+    Espec é: D1 e D2 são setados no ICS com suas probabilidades (P1 é 20 vezes P2), e 
+
+    No AN por exemplo, com uma baixa probabilidade, ele faz uma syscall(Dn, Op) onde Op é uma das 3 operações possíveis acima.
+
+    Essa "syscall" tem que bloquear (parando o processo que solicitou E/S) o AN, e depois, com as interrupções IRQ1 e IRQ2, em ordem de chegada e 
+    em ordem FIFO de pedidos de bloqueados, um por um, essa interrupção vai desbloqueando um a um os ANs que estavam esperando E/S, e os ANs desbloqueados 
+    depois entram em fila de escalonamento novamente (ready), e a partir da próxima IRQ0 um por um começam a rodar novamente 
+    
+    Um AN não pode pedir E/S e novamente na próxima salta de tempo tentar rodar. Ele tem que ser desbloqueado por IRQ1 ou IRQ2
+
+    No nosso caso, ainda vamos implementar como sem kernelSim intermediar a solicitação de E/S. Mas já vamos criar um controle de bloqueados no kernelSim 
+    para cada um dos dois dispositivos (D1 e D2)
+*/
+
+Fila waitingD1; // Fila dos que pediram E/S para D1
+Fila waitingD2; // Fila dos que pediram E/S para D2
+
+
+// Recebe o pid do AN em execução atual
+// Retorna 0 caso não existam processos prontos
+int updateCurrentProcess(pid_t *currentProcess, Fila *ready) {
+
+    if (!empty(ready)) {
+
+        *currentProcess = pop(ready);
+
+        return 1;
+    }
+
+    else {
+        *currentProcess = -1;
+        return 0;
+    }
+
 }
 
-void irq1Handler(int signum) {
-    lastSignal = SIG_IRQ1;
-    return;
-}
+// Atualmente apenas um processo roda por vez.
+// O que está aqui é da forma que foi vista em aula (mapeia para SIGSTOP e SIGCONT)
+int stopOtherProcessess(pid_t pid, PD pd[5]) {
 
-void irq2Handler(int signum) {
-    lastSignal = SIG_IRQ2;
-    return;
-}
-
-int main(void) {
-    char bufferan1, bufferan2;
-
-    char processNumber[2];
-    char shmIdICSString[23];
-    char shmIdProcessString[23];
-    char pid_kernelSimString[23];
-
-    int terminatedProcessess;
-    int fifoan1, fifoan2, fifoics;
     int test;
-    int i;
-    int shmIdICS;
+    pid_t pidx;
 
-    int *shmICSptr;
-    int shmIdProcess[5];
+    for (int i = 1; i <= 5 ; i++) {
 
-    pid_t ICS;
-    pid_t pid_kernelSim;
+        pidx = pd[i - 1].pid;
 
-    pid_t process[5];
+        if (pid != pidx) {
 
-    PD pd[5];
+            test = kill(pidx, SIGSTOP); // Para de rodar os outros processos
+
+            if (test == -1) {
+            perror("[KernelSim]: Erro ao mandar um SIGSTOP para algum AN. Saindo...");
+            exit(-18);
+            }
+        } 
+        
+        else {
+            // Não faz nada
+        }
+    }
+
+    return 0;
+}
+
+void trataSinal(int sinal) {
+
+    if (sinal == SIG_IRQ0) // Fatia de tempo
+    {
+        lastSignal = SIG_IRQ0;
+    }
+
+    else if (sinal == SIG_IRQ1) // D1
+    {
+        lastSignal = SIG_IRQ1;
+    }
+
+    else if (sinal == SIG_IRQ2) // D2
+    {
+        lastSignal = SIG_IRQ2;
+    }
+
+    else {
+        lastSignal = -1;
+    }
+}
+
+
+// KernelSim
+int main(int argc, char *argv[]) {
+
+    int test;
+
+    int fifoan1;
+    int fifoan2;
+    int fifoics;
+
+    char bufferan1; // Vai indicar se o processo mandou \n (não solicitou E/S), e também para qual dispositivo ele quer
+    char bufferan2; // Indica qual operação para o dispositivo ele quer (R, W ou X)
+
+    int extendedStop = 0; // indica se deve parar todo mundo (dispositivo) + ele mesmo
 
     Info *info[5];
 
+    pid_t process[5];
+
+    pid_t pid_kernelSim;
+
+    int processNumberValue;
+    Info *currentInfo;
+
+    int maxInvalidTries = 0;
+
+    int pid;
+    int number;
+
+    pid_t currentProcess;
+
+    pid_t ICS;
+
+    PD pd[5];
+
+    int shmIdProcess[5];
+
+    // Trata sinais
+    signal(SIG_IRQ0, trataSinal);
+    signal(SIG_IRQ1, trataSinal);
+    signal(SIG_IRQ2, trataSinal);
+
+    // Seta kernelSim pid
     pid_kernelSim = getpid();
 
+    // Faz as FIFOS
     if (mkfifo("FIFOAN1", (S_IRUSR | S_IWUSR)) != 0) {
         perror("[KernelSim]: Erro ao criar a FIFOAN1. Saindo...");
         exit(-5);
@@ -108,373 +203,250 @@ int main(void) {
 
     if (mkfifo("FIFOAN2", (S_IRUSR | S_IWUSR)) != 0) {
         perror("[KernelSim]: Erro ao criar a FIFOAN2. Saindo...");
-        exit(-5);
+        exit(-7);
     } 
 
     if ((fifoan2 = open("FIFOAN2", (O_RDONLY | O_NONBLOCK))) < 0) {
         perror("[KernelSim]: Erro ao abrir a FIFOAN2 para leitura. Saindo...");
-        exit(-6);
+        exit(-8);
     }
 
-    if (mkfifo("FIFOCS", (S_IRUSR | S_IWUSR)) != 0) {
+    if (mkfifo("FIFOICS", (S_IRUSR | S_IWUSR)) != 0) {
         perror("[KernelSim]: Erro ao criar a FIFOICS. Saindo...");
-        exit(-5);
+        exit(-9);
     } 
 
     if ((fifoics = open("FIFOICS", (O_RDONLY | O_NONBLOCK))) < 0) {
         perror("[KernelSim]: Erro ao abrir a FIFOICS para leitura. Saindo...");
-        exit(-6);
+        exit(-10);
     }
 
-    // Cria shmem para passar para ICS as shmId da Info* de cada process
-    shmIdICS = shmget(IPC_PRIVATE, sizeof(int) * 5, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR); // Read-write pelo dono, cria se não existe, falha se existe.
+    // Abre shmem com ICS (vetor com 5 ints para IDs de shmem dos ANs)
+    // [CORREÇÃO]: tamanho ajustado para caber 5 IDs de shmem, que o ICS vai ler.
+    int shmIdICS;
+    shmIdICS = shmget(1234, (size_t)(5 * sizeof(int)), (S_IRUSR | S_IWUSR));
     if (shmIdICS < 0) {
-        perror("[KernelSim]: Erro ao criar região de memória compartilhada para ICS. Saindo...");
-        exit(-28);
+        perror("[KernelSim]: Erro ao abrir shmem de ICS. Saindo...");
+        exit(-11);
     }
 
-    shmICSptr = (int *)shmat(shmIdICS, NULL, 0);
+    int *shmICSptr = (int *) shmat(shmIdICS, NULL, 0);
     if (shmICSptr == (void *) -1) {
-        perror("[KernelSim]: Erro ao anexar região de memória compartilhada para ICS. Saindo...");
-        exit(-30);
-    }    
-
-    ICS = fork();
-    if (ICS < 0) {
-        perror("[KernelSim]: Erro ao fazer o fork para o ICS. Saindo...");
-        exit(-7);
+        perror("[KernelSim]: Erro ao anexar shmem de ICS. Saindo...");
+        exit(-12);
     }
 
-    if (ICS == 0) {
-        // Area do filho ICS
+    // [CORREÇÃO]: NÃO vamos mais tentar ler "PID do ICS" aqui,
+    // porque o ICS espera nesta SHM um VETOR com 5 IDs de shmem dos ANs.
+    // O preenchimento acontece LOGO APÓS abrirmos as SHMs dos ANs, usando shmIdProcess[i].
 
-        // Converte valores numericos em string
-        snprintf(shmIdICSString, sizeof(shmIdICSString), "%ld", (long)shmIdICS);
-        snprintf(pid_kernelSimString, sizeof(pid_kernelSimString), "%d", (int)pid_kernelSim);
 
-        char *args[] = {"interruptionControllerSim", pid_kernelSimString, shmIdICSString, NULL};
-        execvp("./interruptionControllerSim", args);
-    }
+    ICS = *shmICSptr;
 
-    // Deixa ICS em estado parado até o escalonamento começar
-    test = kill(ICS, SIGSTOP);
-    if (test == -1) {
-        perror("[KernelSim]: Erro ao enviar sinal SIGSTOP para ICS. Saindo...");
-        exit(-26);
-    }
-
-    for(i = 0; i < 5; i++) {
-
-        // Cria shmem para se comunicar com os 5 processos filho
-        shmIdProcess[i] = shmget(IPC_PRIVATE, sizeof(Info), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR); // Read-write pelo dono, cria se não existe, falha se existe.
-        if (shmIdProcess[i] < 0) {
-            perror("[KernelSim]: Erro ao criar região de memória compartilhada para um processo. Saindo...");
-            exit(-8);
-        }
+    // Abre shmems dos processos
+    for (int i = 0; i < 5; i++) {
+        shmIdProcess[i] = shmget((key_t) (4321 + i), (size_t) sizeof(Info), (S_IRUSR | S_IWUSR));
         
-        // Anexa o segmento de memória compartilhada
+        if (shmIdProcess[i] < 0) {
+            perror("[KernelSim]: Erro ao abrir shmem de AN. Saindo...");
+            exit(-13);
+        }
+
         info[i] = (Info *) shmat(shmIdProcess[i], NULL, 0);
         if (info[i] == (void *) -1) {
-            perror("[KernelSim]: Erro ao anexar segmento de memória compartilhada para um processo. Saindo...");
-            // Remove o segmento de memória compartilhada em caso de erro
-            shmctl(shmIdProcess[i], IPC_RMID, NULL);
-            exit(-20);
+            perror("[KernelSim]: Erro ao anexar shmem de AN. Saindo...");
+            exit(-14);
         }
 
-        // Escreve na shmem de ICS qual o id de uma das shmem do processo Ai
+        process[i]   = info[i]->pid;
+        pd[i].pid    = process[i];
+        pd[i].number = info[i]->number;
+
+        // [CORREÇÃO]: disponibiliza ao ICS os IDs de shmem dos 5 ANs
+        // para que o ICS faça o briefing lendo diretamente os Info*.
         shmICSptr[i] = shmIdProcess[i];
-
-        process[i] = fork();
-        if(process[i] < 0) {
-            perror("[KernelSim]: Erro ao fazer o fork para um processo. Saindo...");
-            exit(-9 - i);
-        }
-
-        if (process[i] == 0) {
-            // Area do filho processo i
-
-            // Para converter processNumber (i) e shmId para string
-            sprintf(processNumber, "%d", i + 1);
-            snprintf(shmIdProcessString, sizeof(shmIdProcessString), "%d", (int)shmIdProcess[i]);
-
-            char *args[] = {"process", processNumber, NULL}; // CORREÇÃO: process só recebe processNumber
-            execvp("./process", args);
-        }
-
-        // Começa o estado de cada processo AN como parado
-        test = kill(process[i], SIGSTOP);
-        if (test == -1) {
-            perror("[KernelSim]: Erro ao mandar um SIGSTOP para algum AN na hora de criar-lo. Saindo...");
-            exit(-17);
-        }
-
-        // Atribui a informação de pid em info[i] o pid de process[i]  
-        info[i]->pid = process[i];
-
-        // Monta uma das 5 entradas para o dicionario de PID para numero de processo [1...5]
-        pd[i].pid = process[i];
-        pd[i].processNumber = i + 1;
     }
 
-    // A partir daqui apenas o pai roda, pos todos os filhos estão executando cada um seu código
-    signal(SIG_IRQ0, irq0Handler);
-    signal(SIG_IRQ1, irq1Handler);
-    signal(SIG_IRQ2, irq2Handler);
 
-    Fila ready;
-    Fila waitingD1;
-    Fila waitingD2;
-
+    // Inicializa filas
     init(&ready);
     init(&waitingD1);
     init(&waitingD2);
 
-    // Faz ICS voltar a continuar
-    test = kill(ICS, SIGCONT);
-    if (test == -1) {
-        perror("[KernelSim]: Erro ao enviar sinal SIGSCONT para ICS. Saindo...");
-        exit(-27);
-    }
-
-    // Coloca os 5 processos AN na fila de prontos
-    for (i = 0; i < 5; i++) {
+    // Coloca todo mundo na fila de prontos inicialmente
+    for (int i = 0; i < 5; i++) {
         push(&ready, process[i]);
     }
 
-    // A partir daqui, escalona
-    pid_t currentProcess;
-    Info *currentInfo;
-    int processNumberValue;
+    // Loop principal
+    while (1) {
 
+        // Se não há processos prontos, aguarda uma IRQ que possa desbloquear alguém
+        if (!updateCurrentProcess(&currentProcess, &ready)) {
+            pause(); // aguarda IRQ
+            if (lastSignal == SIG_IRQ1) {
+                if (!empty(&waitingD1)) {
+                    pid_t acordadoD1 = pop(&waitingD1); // CORREÇÃO: acordado vai para ready (não preempta)
+                    push(&ready, acordadoD1);
+                }
+            }
+            else if (lastSignal == SIG_IRQ2) {
+                if (!empty(&waitingD2)) {
+                    pid_t acordadoD2 = pop(&waitingD2); // CORREÇÃO: idem
+                    push(&ready, acordadoD2);
+                }
+            }
+            lastSignal = -1;
+            continue;
+        }
 
-    /* 
-        Fluxo de funcionamento:
-
-            ICS manda um IRQ0 a cada 0.5s
-            ICS tem 10% de chance de mandar um IRQ1 a cada 0.5s
-            ICS tem 0.5% de chance de mandar um IRQ2 a cada 0.5s
-
-            Caso um IRQ0 seja mandado:
-
-                Simplesmente da um SIGSTOP para ele e o coloca na fila de prontos novamente (Caso PC < MAX)
-                Se PC >= MAX, não faz nada com este processo (Não o coloca novamente na fila de prontos)
-            
-            Caso um IRQ1 seja mandado:
-
-                Checa se a fila de waitingD1 está vazia
-
-                Se estiver, não faz nada
-
-                Se não estiver, da um pop em waitingD1, e coloca o processo na fila de prontos novamente (Caso PC < MAX)
-                Se PC >= MAX, não faz nada com este processo (Não o coloca novamente na fila de prontos)
-
-            Caso um IRQ2 seja mandado:
-
-                Checa se a fila de waitingD2 está vazia
-
-                Se estiver, não faz nada
-
-                Se não estiver, da um pop em waitingD2, e coloca o processo na fila de prontos novamente (Caso PC < MAX)
-                Se PC >= MAX, não faz nada com este processo (Não o coloca novamente na fila de prontos)
-    */
-    
-    terminatedProcessess = 0;
-    while(terminatedProcessess < 5) {
-        currentProcess = pop(&ready);
-
-        // Pega a região da shmem específica para o processo atual
+        // Atualiza info do processo corrente
         processNumberValue = getProcessNumber(currentProcess, pd);
         currentInfo = info[processNumberValue - 1];
 
-        //Manda um sinal para o ICS para indicar o inicio da contagem de um dt de 0.5 segundos
-        //ICS mandara um sinal IRQ0 em 0.5 segs sinalizando que currentProcess deve ser interrompido
-        test = kill(ICS, SIGCONT);
-        if (test == -1) {
-            perror("[KernelSim]: Erro ao mandar um SIGCONT para o ICS. Saindo...");
-            exit(-19);
-        }
-
-        // Troca o estado do processo atual para rodando
-        currentInfo->state = '3'; // CORREÇÃO: estado em char para combinar com printf("%c") do ICS
-
-        // Continua um processo pronto (Primeiro da fila)
+        // Coloca apenas o processo atual para rodar
         test = kill(currentProcess, SIGCONT);
         if (test == -1) {
-            perror("[KernelSim]: Erro ao mandar um SIGCONT para algum AN. Saindo...");
-            exit(-18);
+            perror("[KernelSim]: Erro ao mandar SIGCONT. Saindo...");
+            exit(-15);
         }
 
-        // Controle é desviado para currentProcess, então não precisa pausar.
+        // Para os demais
+        stopOtherProcessess(currentProcess, pd);
 
-        // Controle voltou para KS devido a uma systemcall de currentProcess de R, W ou X para D1 ou D2, ou a um IRQ0 vindo de ICS
+        // Lê “pedido de E/S” (se houver) do AN atual
+        // FIFOAN1: ‘1’ (D1), ‘2’ (D2), ‘\n’ (sem pedido) — leitura é O_NONBLOCK
+        bufferan1 = 0;
         test = read(fifoan1, &bufferan1, 1);
         if (test < 0) {
-            // CORREÇÃO: EAGAIN em O_NONBLOCK significa "sem dados agora"; não é erro fatal
+            // CORREÇÃO: EAGAIN em O_NONBLOCK significa ausência de dados agora; não é erro
             if (errno == EAGAIN) {
                 bufferan1 = 0; // sem pedido nesta rodada
             }
             else {
-                perror("[KernelSim]: Erro ao ler da FIFOAN1. Saindo...");
+                perror("[KernelSim]: Erro ao ler FIFOAN1. Saindo...");
                 exit(-22);
             }
         }
 
-        // Atualiza o contador de programas de currentProcess
-        // CORREÇÃO: PC++ deve ocorrer apenas no IRQ0
-        // currentInfo->PC++;
+        if (bufferan1 == '1' || bufferan1 == '2') {
 
-        if (bufferan1 == '1' || bufferan1 == '2'){
+            // Le a operação (R/W/X) na FIFOAN2 — também O_NONBLOCK
+            bufferan2 = 0;
             test = read(fifoan2, &bufferan2, 1);
-            if (test <= 0) {
-                // CORREÇÃO: se não chegou op ainda, trate como ausência de syscall completa
-                if (test < 0 && errno == EAGAIN) {
-                    // volta ao fluxo normal; não há syscall completa
+            if (test < 0) {
+                if (errno == EAGAIN) {
+                    // CORREÇÃO: ainda não chegou a operação — trata como ausência de syscall completa
+                    bufferan2 = 0;
                 }
                 else {
-                    perror("[KernelSim]: Erro ao ler da FIFOAN2. Saindo...");
+                    perror("[KernelSim]: Erro ao ler FIFOAN2. Saindo...");
                     exit(-24);
                 }
             }
 
-            if (bufferan1 == '1') {
-                // Dispositivo 1 acessado
-                currentInfo->timesD1Acessed++;
-                currentInfo->state = '1'; // CORREÇÃO: esperar IRQ1 (D1) em char
-
-                // Coloca currentProcess na fila de espera para D1
-                push(&waitingD1, currentProcess);
-            }
-
-            else {
-                // Dispositivo 2 acessado
-                currentInfo->timesD2Acessed++;
-                currentInfo->state = '2'; // CORREÇÃO: esperar IRQ2 (D2) em char
-
-                // Coloca currentProcess na fila de espera para D2
-                push(&waitingD2, currentProcess);
-            }
-
-            currentInfo->lastD = bufferan1;
-
             if (bufferan2 == 'R' || bufferan2 == 'W' || bufferan2 == 'X') {
-                currentInfo->lastOp = bufferan2;
 
-                // Faz syscall para ICS para iniciar contagem de IRC1 ou IRC2
-                test = kill(ICS, SIGUSR1);
+                // CORREÇÃO: ao pedir E/S, o AN deve ser parado imediatamente e colocado na fila de bloqueados
+                test = kill(currentProcess, SIGSTOP);
                 if (test == -1) {
-                    perror("[KernelSim]: Erro ao mandar um SIGUSR1 para o ICS. Saindo...");
-                    exit(-31);
+                    perror("[KernelSim]: Erro ao enviar SIGSTOP por syscall. Saindo...");
+                    exit(-99);
                 }
 
+                // Atualiza estado/contadores mínimos se você estiver guardando no Info (opcional)
+                // currentInfo->lastOp = bufferan2; currentInfo->lastDev = bufferan1;
+
+                if (bufferan1 == '1') {
+                    push(&waitingD1, currentProcess);
+                }
+                else {
+                    push(&waitingD2, currentProcess);
+                }
+
+                // Solta a CPU; quem vai executar será escolhido após próxima IRQ0
+                currentProcess = -1;
+
+                // Limpa buffers
+                bufferan1 = 0;
+                bufferan2 = 0;
+
+                // Volta ao laço para escolher outro pronto (ou aguardar IRQ)
+                continue;
             }
 
             else {
-                perror("[KernelSim]: Erro: Opcao inexistente para bufferan2. Saindo...");
-                exit(-24);
+                // CORREÇÃO: sem operação válida -> considera que não houve syscall completa nesta rodada.
+                // Segue adiante para tratar IRQs normalmente.
             }
-        
-            // CORREÇÃO: preempção imediata por syscall (parar o processo agora)
-            test = kill(currentProcess, SIGSTOP);
-            if (test == -1) {
-                perror("[KernelSim]: Erro ao enviar sinal SIGSTOP por syscall. Saindo...");
-                exit(-99);
-            }
-
-            // CORREÇÃO: solta a CPU; quem volta a rodar será escolhido após a próxima IRQ
-            currentProcess = -1;
-            continue;
-}
-
-        else if (bufferan1 == EOF) {
-            // currentProcess não escreveu em FIFOAN1, então não se faz nada
         }
-
         else {
-            // Erro
-            perror("[KernelSim]: Erro: Opcao inexistente para bufferan1. Saindo...");
-            exit(-23);
+            // CORREÇÃO: sem syscall nesta rodada — segue fluxo normal
         }
 
+        // Aguarda IRQ (fatia de tempo ou desbloqueio de dispositivo)
+        pause();
 
-        
-        if (currentInfo->PC >= MAX) {
-            //Processo não volta a ser escalonado
-            currentInfo->state = TERMINATED;
-            terminatedProcessess++;
-        }
-        
-        //Tratamentos de sinais de ICS
-
-        // Controle voltou para KS devido a um IRQ gerado por IC
         if (lastSignal == SIG_IRQ0 || lastSignal == SIG_IRQ1 || lastSignal == SIG_IRQ2) {
-            if (currentInfo->state != TERMINATED) {
-                //Processo volta a ser escalonado pois currentProcess.PC < MAX
-                
+
+            // Se ainda não terminou, trata a causa da interrupção
+            if (currentInfo->state != '4') { // '4' = TERMINATED (ICS imprime %c)
+
                 if (lastSignal == SIG_IRQ0) {
-                    // CORREÇÃO: PC++ acontece no fim da fatia de tempo
-                    // CORREÇÃO: PC++ deve ocorrer apenas no IRQ0
-                    // currentInfo->PC = currentInfo->PC + 1;
-                    currentInfo->state = '0'; // CORREÇÃO: preemptado por IRQ0 (char)
+
+                    // CORREÇÃO: incrementa PC somente no fim da fatia de tempo
+                    currentInfo->PC = currentInfo->PC + 1;
+
+                    // Preempção do processo que estava rodando
                     test = kill(currentProcess, SIGSTOP);
                     if (test == -1) {
-                        perror("[KernelSim]: Erro ao mandar um SIGSTOP para algum AN. Saindo...");
+                        perror("[KernelSim]: Erro ao mandar SIGSTOP no IRQ0. Saindo...");
                         exit(-19);
                     }
 
+                    // Se atingiu MAX, marca como terminado e não reencola
+                    if (currentInfo->PC >= MAX) {
+                        currentInfo->state = '4'; // CORREÇÃO: TERMINATED como caractere (ICS usa %c)
+                    }
+                    else {
+                        // Reencola para round-robin
+                        push(&ready, currentProcess);
+                    }
                 }
 
                 else if (lastSignal == SIG_IRQ1) {
+                    // Desbloqueia UM processo de D1 e coloca em ready (não preempta quem está rodando)
                     if (!empty(&waitingD1)) {
-                        currentProcess = pop(&waitingD1);
+                        pid_t acordadoD1 = pop(&waitingD1); // CORREÇÃO: não sobrescrever currentProcess
+                        push(&ready, acordadoD1);
                     }
                 }
 
-                else {
+                else { // SIG_IRQ2
                     if (!empty(&waitingD2)) {
-                        currentProcess = pop(&waitingD2);
+                        pid_t acordadoD2 = pop(&waitingD2); // CORREÇÃO: idem
+                        push(&ready, acordadoD2);
                     }
-                }
-
-                // Atualiza currentInfo, pois pode se tratar de outro process
-                processNumberValue = getProcessNumber(currentProcess, pd); // CORREÇÃO: recalcular número do processo
-                currentInfo = info[processNumberValue - 1];
-
-                if (currentInfo->state != TERMINATED) {
-                    push(&ready, currentProcess);
                 }
             }
-            
+
+            // Limpa a causa tratada
+            lastSignal = -1;
         }
 
         else {
-            perror("[KernelSim]: Erro: lastSignal enviado por ICS para KernelSim invalido. Saindo...");
+            perror("[KernelSim]: Erro: lastSignal inválido vindo de ICS. Saindo...");
             exit(-25);
         }
-
-        // CORREÇÃO: zera lastSignal após tratar a interrupção
-        lastSignal = -1;
-
-        //Coloca currentProcess novamente na fila de prontos, pois está pronto para ser posteriormente escalonado.
-        
-
     }
 
-    //Fecha tudo e sai
-
-    //Deslinka das FIFOS 
-    unlink("FIFOAN1");
-    unlink("FIFOAN2");
-    unlink("FIFOICS");
-
-    // Fecha as FIFOS
+    // Nunca chega aqui em operação normal, mas deixo a limpeza por completude
     close(fifoan1);
     close(fifoan2);
     close(fifoics);
 
-    // Dettacha e deleta as shm
-    for (i = 0; i < 5; i++) {
+    for (int i = 0; i < 5; i++) {
         shmdt(info[i]);
-        shmctl(shmIdProcess[i], IPC_RMID, NULL);
     }
 
     shmdt(shmICSptr);
