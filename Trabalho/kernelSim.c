@@ -69,6 +69,7 @@ void irq2Handler(int signum) {
 
 int main(void) {
     char bufferan1, bufferan2;
+
     char processNumber[2];
     char shmIdICSString[23];
     char shmIdProcessString[23];
@@ -79,6 +80,7 @@ int main(void) {
     int test;
     int i;
     int shmIdICS;
+
     int *shmICSptr;
     int shmIdProcess[5];
 
@@ -90,6 +92,8 @@ int main(void) {
     PD pd[5];
 
     Info *info[5];
+
+    pid_kernelSim = getpid();
 
     if (mkfifo("FIFOAN1", (S_IRUSR | S_IWUSR)) != 0) {
         perror("[KernelSim]: Erro ao criar a FIFOAN1. Saindo...");
@@ -140,10 +144,10 @@ int main(void) {
         exit(-7);
     }
 
-    pid_kernelSim = getpid();
-
     if (ICS == 0) {
         // Area do filho ICS
+
+        // Converte valores numericos em string
         snprintf(shmIdICSString, sizeof(shmIdICSString), "%ld", (long)shmIdICS);
         snprintf(pid_kernelSimString, sizeof(pid_kernelSimString), "%d", (int)pid_kernelSim);
 
@@ -272,6 +276,7 @@ int main(void) {
                 Se não estiver, da um pop em waitingD2, e coloca o processo na fila de prontos novamente (Caso PC < MAX)
                 Se PC >= MAX, não faz nada com este processo (Não o coloca novamente na fila de prontos)
     */
+    
     while(terminatedProcessess < 5) {
         currentProcess = pop(&ready);
 
@@ -281,9 +286,9 @@ int main(void) {
 
         //Manda um sinal para o ICS para indicar o inicio da contagem de um dt de 0.5 segundos
         //ICS mandara um sinal IRQ0 em 0.5 segs sinalizando que currentProcess deve ser interrompido
-        test = kill(ICS, SIGUSR1);
+        test = kill(ICS, SIGCONT);
         if (test == -1) {
-            perror("[KernelSim]: Erro ao mandar um SIGUSR1 para o ICS. Saindo...");
+            perror("[KernelSim]: Erro ao mandar um SIGCONT para o ICS. Saindo...");
             exit(-19);
         }
 
@@ -299,7 +304,7 @@ int main(void) {
 
         // Controle é desviado para currentProcess, então não precisa pausar.
 
-        // Controle voltou para KS devido a uma systemcall de currentProcess de R, W ou X para D1 ou D2
+        // Controle voltou para KS devido a uma systemcall de currentProcess de R, W ou X para D1 ou D2, ou a um IRQ0 vindo de ICS
         test = read(fifoan1, &bufferan1, 1);
         if (test < 0) {
             perror("[KernelSim]: Erro ao ler da FIFOAN1. Saindo...");
@@ -340,6 +345,11 @@ int main(void) {
                 currentInfo->lastOp = bufferan2;
 
                 // Faz syscall para ICS para iniciar contagem de IRC1 ou IRC2
+                test = kill(ICS, SIGUSR1);
+                if (test == -1) {
+                    perror("[KernelSim]: Erro ao mandar um SIGUSR1 para o ICS. Saindo...");
+                    exit(-31);
+                }
 
             }
 
@@ -350,7 +360,7 @@ int main(void) {
         }
 
         else if (bufferan1 == EOF) {
-            // currentProcess não escreveu em FIFOAN1
+            // currentProcess não escreveu em FIFOAN1, então não se faz nada
         }
 
         else {
@@ -375,25 +385,32 @@ int main(void) {
                 //Processo volta a ser escalonado pois currentProcess.PC < MAX
                 
                 if (lastSignal == IRQ0) {
+                    test = kill(currentProcess, SIGSTOP);
+                    if (test == -1) {
+                        perror("[KernelSim]: Erro ao mandar um SIGSTOP para algum AN. Saindo...");
+                        exit(-19);
+                    }
 
                 }
 
                 else if (lastSignal == IRQ1) {
-
+                    if (!empty(&waitingD1)) {
+                        currentProcess = pop(&waitingD1);
+                    }
                 }
 
                 else {
-
+                    if (!empty(&waitingD2)) {
+                        currentProcess = pop(&waitingD2);
+                    }
                 }
 
-                //Processo volta a ser escalonado pois currentProcess.PC < MAX
-                
-            }
+                // Atualiza currentInfo, pois pode se tratar de outro process
+                currentInfo = info[processNumberValue];
 
-            test = kill(currentProcess, SIGSTOP);
-            if (test == -1) {
-                perror("[KernelSim]: Erro ao mandar um SIGSTOP para algum AN. Saindo...");
-                exit(-19);
+                if (currentInfo->state != TERMINATED) {
+                    push(&ready, currentProcess);
+                }
             }
             
         }
@@ -404,7 +421,7 @@ int main(void) {
         }
 
         //Coloca currentProcess novamente na fila de prontos, pois está pronto para ser posteriormente escalonado.
-        push(&ready, currentProcess);
+        
 
     }
 

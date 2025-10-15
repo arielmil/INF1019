@@ -31,15 +31,15 @@ void interruptHandler(int signum) {
     printf("[ICS]: Briefing do estado de todos os processos AN:\n");
     for (int i = 0; i < 5; i++) {
 
-        state = info[i]->state;
-        lastD = info[i]->lastD;
-        lastOp = info[i]->lastOp;
-        PC = info[i]->PC;
-        timesD1Acessed = info[i]->timesD1Acessed;
-        timesD2Acessed = info[i]->timesD2Acessed;
-        pid = info[i]->pid;
+        state           = info[i]->state;
+        lastD           = info[i]->lastD;
+        lastOp          = info[i]->lastOp;
+        PC              = info[i]->PC;
+        timesD1Acessed  = info[i]->timesD1Acessed;
+        timesD2Acessed  = info[i]->timesD2Acessed;
+        pid             = info[i]->pid;
 
-        printf("Processo de %d:\n"
+        printf("Processo %d de PID %d:\n"
                "Estado: %c\n"
                "Ultimo dispositivo acessado: %c\n"
                "Ultima operacao feita no dispositvo: %c\n"
