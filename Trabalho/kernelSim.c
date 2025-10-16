@@ -8,10 +8,11 @@
 #include <signal.h> // Para tratamento de sinais
 #include <sys/queue.h> // Para uso de filas
 #include <unistd.h> // Para pause()
+#include <errno.h>
 
 #include "info.h"
 #include "irq.h"
-#include "fila.c"
+#include "fila.h"
 
 // Fazer em seguida:
 
@@ -32,12 +33,13 @@
 
 */
 
-
-int lastSignal = -1;
+static volatile sig_atomic_t irq0Pending = 0;
+static volatile sig_atomic_t irq1Pending = 0;
+static volatile sig_atomic_t irq2Pending = 0;
 
 typedef struct processDictionary {
     pid_t pid;
-    int processNumber
+    int processNumber;
 }PD;
 
 int getProcessNumber(pid_t pid, PD *pd) {
@@ -53,17 +55,17 @@ int getProcessNumber(pid_t pid, PD *pd) {
 }
 
 void irq0Handler(int signum) {
-    lastSignal = SIG_IRQ0;
+    irq0Pending = 1;
     return;
 }
 
 void irq1Handler(int signum) {
-    lastSignal = SIG_IRQ1;
+    irq1Pending = 1;
     return;
 }
 
 void irq2Handler(int signum) {
-    lastSignal = SIG_IRQ2;
+    irq2Pending = 1;
     return;
 }
 
@@ -308,8 +310,14 @@ int main(void) {
         // Controle voltou para KS devido a uma systemcall de currentProcess de R, W ou X para D1 ou D2, ou a um IRQ0 vindo de ICS
         test = read(fifoan1, &bufferan1, 1);
         if (test < 0) {
-            perror("[KernelSim]: Erro ao ler da FIFOAN1. Saindo...");
-            exit(-22);
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                bufferan1 = EOF;
+            }
+
+            else {
+                perror("[KernelSim]: Erro ao ler da FIFOAN1. Saindo...");
+                exit(-22);
+            }
         }
 
         //Atualiza o contador de programas de currentProcess
@@ -341,6 +349,11 @@ int main(void) {
             }
 
             currentInfo->lastD = bufferan1;
+            test = kill(currentProcess, SIGSTOP);
+            if (test == -1) {
+                perror("[KernelSim]: Erro ao mandar um SIGSTOP para um processo. Saindo...");
+                exit(-33);
+            }
 
             if (bufferan2 == 'R' || bufferan2 == 'W' || bufferan2 == 'X') {
                 currentInfo->lastOp = bufferan2;
@@ -379,51 +392,62 @@ int main(void) {
         }
         
         //Tratamentos de sinais de ICS
+        test = kill(ICS, SIGCONT);
 
-        // Controle voltou para KS devido a um IRQ gerado por IC
-        if (lastSignal == SIG_IRQ0 || lastSignal == SIG_IRQ1 || lastSignal == SIG_IRQ2) {
-            if (currentInfo->state != TERMINATED) {
-                //Processo volta a ser escalonado pois currentProcess.PC < MAX
-                
-                if (lastSignal == SIG_IRQ0) {
-                    test = kill(currentProcess, SIGSTOP);
-                    if (test == -1) {
-                        perror("[KernelSim]: Erro ao mandar um SIGSTOP para algum AN. Saindo...");
-                        exit(-19);
-                    }
+        if (test == -1) {
+            perror("[KernelSim]: Erro ao mandar um SIGCONT para algum processo. Saindo...");
+            exit(-35);
+        }
 
+        pid_t runningPid = currentProcess;
+
+        Info *runningInfo = currentInfo;
+
+        pid_t resumed;
+
+        int resumedNumber;
+
+        Info *resumedInfo;
+
+        while (!irq0Pending && !irq1Pending && !irq2Pending) {
+            ; // espera ocupada até o handler gravar um sinal!
+        }
+
+        if (irq0Pending) {
+            irq0Pending = 0;
+            if (runningInfo->state == RUNNING) {
+                test = kill(runningPid, SIGSTOP);
+                if (test == -1) {
+                    perror("[KernelSim]: Erro ao mandar SIGSTOP para um processo. Saindo...");
+                    exit(-36);
                 }
+                push(&ready, runningPid);
+            }
+        }
 
-                else if (lastSignal == SIG_IRQ1) {
-                    if (!empty(&waitingD1)) {
-                        currentProcess = pop(&waitingD1);
-                    }
-                }
-
-                else {
-                    if (!empty(&waitingD2)) {
-                        currentProcess = pop(&waitingD2);
-                    }
-                }
-
-                // Atualiza currentInfo, pois pode se tratar de outro process
-                currentInfo = info[processNumberValue - 1];
-
-                if (currentInfo->state != TERMINATED) {
-                    push(&ready, currentProcess);
+        if (irq1Pending) {
+            irq1Pending = 0;
+            if (!empty(&waitingD1)) {
+                resumed = pop(&waitingD1);
+                resumedNumber = getProcessNumber(resumed, pd);
+                resumedInfo = info[resumedNumber - 1];
+                if (resumedInfo->state != TERMINATED) {
+                    push(&ready, resumed);
                 }
             }
-            
         }
 
-        else {
-            perror("[KernelSim]: Erro: lastSignal enviado por ICS para KernelSim invalido. Saindo...");
-            exit(-25);
-        }
-
-        //Coloca currentProcess novamente na fila de prontos, pois está pronto para ser posteriormente escalonado.
-        
-
+        if (irq2Pending) {
+            irq2Pending = 0;
+            if (!empty(&waitingD2)) {
+                resumed = pop(&waitingD2);
+                resumedNumber = getProcessNumber(resumed, pd);
+                resumedInfo = info[resumedNumber - 1];
+                if (resumedInfo->state != TERMINATED) {
+                    push(&ready, resumed);
+                }
+            }
+        }        
     }
 
     //Fecha tudo e sai

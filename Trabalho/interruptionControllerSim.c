@@ -84,7 +84,6 @@ int main(int argc, char *argv[]) {
 
     signal(SIGINT, interruptHandler);
     signal(SIGUSR1, sigusr1Hanlder);
-    signal(SIGINT, sigusr1Hanlder);
 
     srand((unsigned)(getpid() ^ time(NULL))); // Para seedar a função rand()
 
