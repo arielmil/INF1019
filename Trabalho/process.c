@@ -3,6 +3,7 @@
 #include <unistd.h> // Para getpid() e usleep()
 #include <time.h> // Para time()
 #include <fcntl.h> // Para flags de controle de FIFO.
+#include <signal.h>
 #include "info.h"
 
 /* OBS: Usarei duas FIFOS para IPC entre process e KS:
@@ -32,6 +33,9 @@ int main(int argc, char *argv[]) {
     int processNumber; // [1..5]
 
     pid_t pid = getpid();
+
+    // Sinaliza para ignorar um SIGINT
+    signal(SIGINT, SIG_IGN);
     
     if (argc < 2) {
         perror("Erro: Processo não recebeu o número de argumentos necessários. Saindo...\n");

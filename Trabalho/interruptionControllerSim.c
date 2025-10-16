@@ -10,6 +10,41 @@
 
 Info *info[5];
 
+static const char *stateToString(char state) {
+    switch (state) {
+        case PREEMPTED:   return "PRONTO";
+        case WAITING_D1:  return "ESPERANDO D1";
+        case WAITING_D2:  return "ESPERANDO D2";
+        case RUNNING:     return "RODANDO";
+        case TERMINATED:  return "TERMINADO";
+        default:          return "DESCONHECIDO";
+    }
+}
+
+static char normalizeDevice(char d) {
+    if (d == '1' || d == '2') {
+        return d;
+    }
+
+    else {
+        return '-';
+    }
+
+    //return (d == '1' || d == '2') ? d : '-';
+}
+
+static char normalizeOp(char op) {
+    if (op == 'R' || op == 'W' || op == 'X') {
+        return op;
+    }
+
+    else {
+        return '-';
+    }
+
+    //return (op == 'R' || op == 'W' || op == 'X') ? op : '-';
+}
+
 void sigusr1Hanlder(int signum) {
     // Feito apenas para desviar o fluxo novamente para ICS.
     int a = 1;
@@ -18,7 +53,7 @@ void sigusr1Hanlder(int signum) {
 
 void interruptHandler(int signum) {
     // Faz o briefing
-    char c;
+    int ch;
 
     char state; // 0: Interrompido por IRQ0, 1: Esperando Por IRQ1, 2: Esperando por IRQ2, 3: Rodando, 4: Terminado
     char lastD; // 1 para D1 ou 2 para D2
@@ -40,17 +75,20 @@ void interruptHandler(int signum) {
         pid             = info[i]->pid;
 
         printf("Processo %d de PID %d:\n"
-               "Estado: %c\n"
+               "Estado: %s\n"
                "Ultimo dispositivo acessado: %c\n"
                "Ultima operacao feita no dispositvo: %c\n"
                "PC: %d\n"
                "Quantidade de vezes que acessou D1: %d\n"
                "Quantidade de vezes que acessou D2: %d.\n\n",
-               i + 1, (int)pid, state, lastD, lastOp, PC, timesD1Acessed, timesD2Acessed);
+               i + 1, (int)pid, stateToString(state), normalizeDevice(lastD), normalizeOp(lastOp),
+               PC, timesD1Acessed, timesD2Acessed);
     }
 
     printf("Digite qualquer coisa para continuar...\n");
-    scanf("%c", &c);
+    while ((ch = getchar()) != '\n' && ch != EOF);
+    fflush(stdout);
+
     return;
 }
 
@@ -80,6 +118,10 @@ int main(int argc, char *argv[]) {
     // Pega todos os Infos de cada processo para fazer o briefing caso seja interrompido por Ctrl-C
     for (i = 0; i < 5; i++) {
         info[i] = (Info *)shmat(shmICSptr[i], NULL, 0);
+        if (info[i] == (void *) -1) {
+            perror("[ICS]: Erro au usar shmat para um info. Saindo...");
+            _exit(-37);
+        }
     }
 
     signal(SIGINT, interruptHandler);
