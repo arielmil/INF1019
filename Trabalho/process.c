@@ -3,7 +3,9 @@
 #include <unistd.h> // Para getpid() e usleep()
 #include <time.h> // Para time()
 #include <fcntl.h> // Para flags de controle de FIFO.
-#include <signal.h>
+#include <signal.h> // Para signal()
+#include <string.h> // Para strcpy()
+#include <sys/shm.h> // Para shmget(), shmat(), shmdt() e shmctl()
 #include "info.h"
 
 /* OBS: Usarei duas FIFOS para IPC entre process e KS:
@@ -23,13 +25,15 @@
         porém deve apenas atualizar os campos timesD1acessed e timesD2acessed se uma mensagem por FIFO2 for enviada.
 */
 
-// OBS: argv[0]: ./process, argv[1]: processNumber
+// OBS: argv[0]: ./process, argv[1]: processNumber, argv[2]: shmIdProcess
 int main(int argc, char *argv[]) {
     char D, Op;
-
+    char buffer[] = "D, O";
+    char *mensagem;
     int PC = 0;
     int d;
-    int fifoan1, fifoan2;
+    int fifoan;
+    int shmIdProcess;
     int processNumber; // [1..5]
 
     pid_t pid = getpid();
@@ -37,27 +41,30 @@ int main(int argc, char *argv[]) {
     // Sinaliza para ignorar um SIGINT
     signal(SIGINT, SIG_IGN);
     
-    if (argc < 2) {
+    if (argc < 3) {
         perror("Erro: Processo não recebeu o número de argumentos necessários. Saindo...\n");
         _exit(-1);
     }
 
     processNumber = atoi(argv[1]);
 
-    fifoan1 = open("FIFOAN1", O_WRONLY); // Abre uma FIFO em modo de escrita bloqueante para sinalizar ao kernel a espera de IRQ0
-    if (fifoan1 < 0) {
+    fifoan = open("FIFOAN", O_WRONLY); // Abre uma FIFO em modo de escrita bloqueante para sinalizar ao kernel a espera de IRQ0
+    if (fifoan < 0) {
         perror("Erro ao abrir a FIFO 'FIFOAN1' para escrita. Saindo...\n");
         _exit(-2);
     }
 
-    fifoan2 = open("FIFOAN2", O_WRONLY); // Abre uma FIFO em modo de escrita bloqueante para sinalizar ao kernel a espera de IRQ0
-    if (fifoan2 < 0) {
-        perror("Erro ao abrir a FIFO 'FIFOAN2' para escrita. Saindo...\n");
-        close(fifoan1);
-        _exit(-3);
+    shmIdProcess = atoi(argv[2]);
+
+    srand((unsigned)(pid ^ time(NULL))); // Para seedar a função rand()
+
+    mensagem = (char *)malloc(sizeof(char) * 5);
+    if (mensagem == NULL) {
+        perror("[Process]: Erro ao usar malloc para mensagem. Saindo...");
+        _exit(-40);
     }
 
-    srand((unsigned)(pid ^ time(NULL))); // Para seedar a função rand() 
+    strcpy(mensagem, buffer);
 
     while (PC < MAX) {
         usleep(500000);
@@ -91,8 +98,11 @@ int main(int argc, char *argv[]) {
             // Escreve em FIFO1 o disp usado e em FIFO2 qual a op para simular syscall
             // Isso deve desviar o fluxo de controle para KS
             printf("[Processo %d]: Dispositivo acessado: %c com operacao: %c.\n", processNumber, D, Op);
-            write(fifoan1, &D, 1);
-            write(fifoan2, &Op, 1);
+
+            mensagem[0] = D;
+            mensagem[3] = Op;
+
+            write(fifoan, mensagem, strlen(mensagem) + 1);
 
         }
 
@@ -105,8 +115,7 @@ int main(int argc, char *argv[]) {
         usleep(500000);
     }
 
-    close(fifoan1);
-    close(fifoan2);
+    close(fifoan);
 
     _exit(0);
 }

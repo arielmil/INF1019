@@ -129,7 +129,8 @@ static void processPendingInterrupts(Fila *ready, Fila *waitingD1, Fila *waiting
 }
 
 int main(void) {
-    char bufferan1, bufferan2;
+    char bufferD, bufferOp;
+    char bufferan[5];
 
     char processNumber[2];
     char shmIdICSString[23];
@@ -137,7 +138,7 @@ int main(void) {
     char pid_kernelSimString[23];
 
     int terminatedProcessess;
-    int fifoan1, fifoan2;
+    int fifoan;
     int test;
     int i;
     int shmIdICS;
@@ -160,28 +161,15 @@ int main(void) {
     signal(SIGINT, SIG_IGN);
 
     //Deslinka as FIFO para garantir criação segura
-    unlink("FIFOAN1");
+    unlink("FIFOAN");
 
-    if (mkfifo("FIFOAN1", (S_IRUSR | S_IWUSR)) != 0) {
-        perror("[KernelSim]: Erro ao criar a FIFOAN1. Saindo...");
+    if (mkfifo("FIFOAN", (S_IRUSR | S_IWUSR)) != 0) {
+        perror("[KernelSim]: Erro ao criar a FIFOAN. Saindo...");
         exit(-5);
     } 
 
-    if ((fifoan1 = open("FIFOAN1", (O_RDONLY | O_NONBLOCK))) < 0) {
-        perror("[KernelSim]: Erro ao abrir a FIFOAN1 para leitura. Saindo...");
-        exit(-6);
-    }
-
-    //Deslinka as FIFO para garantir criação segura
-    unlink("FIFOAN2");
-
-    if (mkfifo("FIFOAN2", (S_IRUSR | S_IWUSR)) != 0) {
-        perror("[KernelSim]: Erro ao criar a FIFOAN2. Saindo...");
-        exit(-5);
-    } 
-
-    if ((fifoan2 = open("FIFOAN2", (O_RDONLY | O_NONBLOCK))) < 0) {
-        perror("[KernelSim]: Erro ao abrir a FIFOAN2 para leitura. Saindo...");
+    if ((fifoan = open("FIFOAN", (O_RDONLY | O_NONBLOCK))) < 0) {
+        perror("[KernelSim]: Erro ao abrir a FIFOAN para leitura. Saindo...");
         exit(-6);
     }
 
@@ -232,7 +220,7 @@ int main(void) {
             sprintf(processNumber, "%d", i + 1);
             snprintf(shmIdProcessString, sizeof(shmIdProcessString), "%d", (int)shmIdProcess[i]);
 
-            char *args[] = {"process", processNumber, NULL};
+            char *args[] = {"process", processNumber, shmIdProcessString, NULL};
             execvp("./process", args);
 
             // Nao é para voltar desse execvp
@@ -288,9 +276,9 @@ int main(void) {
     }
 
     // A partir daqui apenas o pai roda, pos todos os filhos estão executando cada um seu código
-    signal(SIG_IRQ0, irq0Handler);
-    signal(SIG_IRQ1, irq1Handler);
-    signal(SIG_IRQ2, irq2Handler);
+    signal(IRQ0, irq0Handler);
+    signal(IRQ1, irq1Handler);
+    signal(IRQ2, irq2Handler);
 
     Fila ready;
     Fila waitingD1;
@@ -383,11 +371,11 @@ int main(void) {
         // Controle é desviado para currentProcess, então não precisa pausar.
 
         // Controle voltou para KS devido a uma systemcall de currentProcess de R, W ou X para D1 ou D2, ou a um IRQ0 vindo de ICS
-        test = read(fifoan1, &bufferan1, 1);
+        test = read(fifoan, bufferan, 5);
         if (test < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Nenhum processo escreveu nada na FIFO
-                bufferan1 = EOF;
+                bufferD = EOF;
             }
 
             else {
@@ -396,17 +384,15 @@ int main(void) {
             }
         }
 
+        bufferD = bufferan[0];
+
         //Atualiza o contador de programas de currentProcess
         currentInfo->PC++;
 
-        if (bufferan1 == '1' || bufferan1 == '2'){
-            test = read(fifoan2, &bufferan2, 1);
-            if (test <= 0) {
-                perror("[KernelSim]: Erro ao ler da FIFOAN2. Saindo...");
-                exit(-24);
-            }
+        if (bufferD == '1' || bufferD == '2'){
+            bufferOp = bufferan[3];
 
-            if (bufferan1 == '1') {
+            if (bufferOp == '1') {
                 // Dispositivo 1 acessado
                 currentInfo->timesD1Acessed++;
                 currentInfo->state = WAITING_D1;
@@ -424,7 +410,7 @@ int main(void) {
                 push(&waitingD2, currentProcess);
             }
 
-            currentInfo->lastD = bufferan1;
+            currentInfo->lastD = bufferD;
             test = kill(currentProcess, SIGSTOP);
             if (test == -1) {
                 if (errno != ESRCH) {
@@ -433,26 +419,26 @@ int main(void) {
                 }
             }
 
-            if (bufferan2 == 'R' || bufferan2 == 'W' || bufferan2 == 'X') {
-                currentInfo->lastOp = bufferan2;
+            if (bufferOp == 'R' || bufferOp == 'W' || bufferOp == 'X') {
+                currentInfo->lastOp = bufferOp;
 
             }
 
             else {
-                if (bufferan2 != 0) {
+                if (bufferOp != 0) {
                     perror("[KernelSim]: Erro: Opcao inexistente para bufferan2. Saindo...");
                     exit(-24);
                 }
             }
         }
 
-        else if (bufferan1 == EOF) {
+        else if (bufferD == EOF) {
             // currentProcess não escreveu em FIFOAN1, então não se faz nada
         }
 
         else {
             // Erro
-            if (bufferan1 != 0) {
+            if (bufferD != 0) {
                 perror("[KernelSim]: Erro: Opcao inexistente para bufferan1. Saindo...");
                 exit(-23);
             }
@@ -491,13 +477,8 @@ int main(void) {
 
     //Fecha tudo e sai
 
-    //Deslinka das FIFOS 
-    unlink("FIFOAN1");
-    unlink("FIFOAN2");
-
     // Fecha as FIFOS
-    close(fifoan1);
-    close(fifoan2);
+    close(fifoan);
 
     // Dettacha e deleta as shm
     for (i = 0; i < 5; i++) {

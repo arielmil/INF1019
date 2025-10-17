@@ -45,12 +45,6 @@ static char normalizeOp(char op) {
     //return (op == 'R' || op == 'W' || op == 'X') ? op : '-';
 }
 
-void sigusr1Hanlder(int signum) {
-    // Feito apenas para desviar o fluxo novamente para ICS.
-    int a = 1;
-    return;
-}
-
 void interruptHandler(int signum) {
     // Faz o briefing
     int ch;
@@ -125,7 +119,6 @@ int main(int argc, char *argv[]) {
     }
 
     signal(SIGINT, interruptHandler);
-    signal(SIGUSR1, sigusr1Hanlder);
 
     srand((unsigned)(getpid() ^ time(NULL))); // Para seedar a função rand()
 
@@ -133,7 +126,7 @@ int main(int argc, char *argv[]) {
         usleep(500000);
         
         // Enviar SIGUSR1 para desvia o fluxo para cá
-        kill(ks_pid, SIG_IRQ0);
+        kill(ks_pid, IRQ0);
 
         d = (rand()%1000) +1;
 
@@ -142,13 +135,13 @@ int main(int argc, char *argv[]) {
             // Chance de 0.5% de ocorrencia
             if (d <= 5) {
                 // Enviar SIGUSR1 para desvia o fluxo para cá
-                kill(ks_pid, SIG_IRQ2);
+                kill(ks_pid, IRQ2);
             }
 
             // Chance de 10% de ocorrencia
             else {
                 // Enviar SIGUSR1 para desvia o fluxo para cá
-                kill(ks_pid, SIG_IRQ1);
+                kill(ks_pid, IRQ1);
             }
         }
     }
