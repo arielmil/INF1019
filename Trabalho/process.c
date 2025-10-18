@@ -36,6 +36,8 @@ int main(int argc, char *argv[]) {
     int shmIdProcess;
     int processNumber; // [1..5]
 
+    Info *info;
+
     pid_t pid = getpid();
 
     // Sinaliza para ignorar um SIGINT
@@ -55,6 +57,11 @@ int main(int argc, char *argv[]) {
     }
 
     shmIdProcess = atoi(argv[2]);
+    info = shmat(shmIdProcess, NULL, 0);
+    if (info == (void *) -1) {
+        perror("[Process]: Erro ao usar shmat. Saindo...");
+        _exit(-41);
+    }
 
     srand((unsigned)(pid ^ time(NULL))); // Para seedar a função rand()
 
@@ -111,7 +118,7 @@ int main(int argc, char *argv[]) {
             printf("[Processo %d]: Esperando seu tempo de rodar acabar.\n", processNumber);
         }
 
-        PC++;
+        info->PC++;
         usleep(500000);
     }
 

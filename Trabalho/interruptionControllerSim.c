@@ -12,7 +12,7 @@ Info *info[5];
 
 static const char *stateToString(char state) {
     switch (state) {
-        case PREEMPTED:   return "PRONTO";
+        case STOPPED:   return "PRONTO";
         case WAITING_D1:  return "ESPERANDO D1";
         case WAITING_D2:  return "ESPERANDO D2";
         case RUNNING:     return "RODANDO";
@@ -43,6 +43,10 @@ static char normalizeOp(char op) {
     }
 
     //return (op == 'R' || op == 'W' || op == 'X') ? op : '-';
+}
+
+void usr1Handler(int signum) {
+    // Fecha tudo
 }
 
 void interruptHandler(int signum) {

@@ -2,7 +2,7 @@
 
 #define MAX 30
 
-#define PREEMPTED 0
+#define STOPPED 0
 #define WAITING_D1 1
 #define WAITING_D2 2
 #define RUNNING 3

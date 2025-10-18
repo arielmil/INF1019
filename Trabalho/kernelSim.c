@@ -70,64 +70,6 @@ void irq2Handler(int signum) {
     return;
 }
 
-static void processPendingInterrupts(Fila *ready, Fila *waitingD1, Fila *waitingD2, pid_t runningPid, Info *runningInfo, PD *pd, Info **info) {
-    pid_t resumed;
-    int resumedNumber;
-    Info *resumedInfo;
-
-    while (irq0Pending || irq1Pending || irq2Pending) {
-        if (irq0Pending) {
-            irq0Pending = 0;
-            
-            if (runningInfo != NULL && runningInfo->state == RUNNING) {
-                
-                if (kill(runningPid, SIGSTOP) == -1) {
-                    
-                    if (errno != ESRCH) {
-                        perror("[KernelSim]: Erro ao mandar SIGSTOP para um processo ao tratar IRQ0. Saindo...");
-                        exit(-36);
-                    }
-                } 
-                
-                else {
-                    runningInfo->state = PREEMPTED;
-                    push(ready, runningPid);
-                }
-            }
-        }
-
-        if (irq1Pending) {
-            irq1Pending = 0;
-            
-            if (!empty(waitingD1)) {
-                resumed = pop(waitingD1);
-                resumedNumber = getProcessNumber(resumed, pd);
-                resumedInfo = info[resumedNumber - 1];
-                
-                if (resumedInfo->state != TERMINATED) {
-                    resumedInfo->state = PREEMPTED;
-                    push(ready, resumed);
-                }
-            }
-        }
-
-        if (irq2Pending) {
-            irq2Pending = 0;
-            
-            if (!empty(waitingD2)) {
-                resumed = pop(waitingD2);
-                resumedNumber = getProcessNumber(resumed, pd);
-                resumedInfo = info[resumedNumber - 1];
-                
-                if (resumedInfo->state != TERMINATED) {
-                    resumedInfo->state = PREEMPTED;
-                    push(ready, resumed);
-                }
-            }
-        }
-    }
-}
-
 int main(void) {
     char bufferD, bufferOp;
     char bufferan[5];
@@ -236,7 +178,7 @@ int main(void) {
 
         // Atribui a informação de pid em info[i] o pid de process[i]  
         info[i]->pid = process[i];
-        info[i]->state = PREEMPTED;
+        info[i]->state = STOPPED;
         info[i]->lastD = '-';
         info[i]->lastOp = '-';
         info[i]->PC = 0;
