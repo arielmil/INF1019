@@ -244,7 +244,11 @@ int main(void) {
 
     // A partir daqui, escalona
     pid_t currentProcess;
+    pid_t syscalledProcess;
+
     Info *currentInfo;
+    Info *syscalledInfo;
+
     int processNumberValue;
 
 
@@ -279,144 +283,168 @@ int main(void) {
                 Se PC >= MAX, não faz nada com este processo (Não o coloca novamente na fila de prontos)
     */
     
-    terminatedProcessess = 0;
-    while (terminatedProcessess < 5) {
-        while (empty(&ready) && terminatedProcessess < 5) {
+    while(terminatedProcessess < 5) {
+        
+        while(empty(&ready)) {
+            // Dorme por 0.1s para evitar espera ocupada e dar chance de outro processo ser escalonado
+            usleep(100000);
 
-            // Espera ICS enviar um sinal
-            while (!irq0Pending && !irq1Pending && !irq2Pending) {
-                pause();
+            // Se recebeu um IRQ1
+            if(irq1Pending) {
+
+                if (!empty(&waitingD1)) {
+                    syscalledProcess = pop(&waitingD1);
+                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd)];
+                    syscalledInfo->state = READY;
+                    push(&ready, syscalledProcess);
+                }
+
+                // Coloca o sinal como tratado
+                irq1Pending = 0;
             }
 
-            // Trata o sinal e coloca o processo adequadamente na fila de prontos
-            processPendingInterrupts(&ready, &waitingD1, &waitingD2, -1, NULL, pd, info);
+            else if (irq1Pending) {
+
+                if (!empty(&waitingD2)) {
+                    syscalledProcess = pop(&waitingD2);
+                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd)];
+                    syscalledInfo->state = READY;
+                    push(&ready, syscalledProcess);
+                }
+
+                // Coloca o sinal como tratado
+                irq2Pending = 0;
+            }
         }
 
-        if (terminatedProcessess >= 5) {
+        // A partir daqui é garantido que ready não está vazia
+        currentProcess = pop(&ready);
+        currentInfo = info[getProcessNumber(currentProcess, pd)];
+        
+        currentInfo->state == RUNNING;
+
+        test = kill(currentProcess, SIGCONT);
+        if (test == -1) {
+            perror("[KernelSim]: Erro ao enviar um SIGCONT para um processo. Saindo...");
+            exit(-36);
+        }
+
+        // Continuan o while enquanto não recebe um IRQX, ou um syscall de process
+        while(!irq0Pending && !irq1Pending && !irq2Pending) {
+            // Dorme por 0.1s para evitar espera ocupada e dar chance de outro processo ser escalonado
+            usleep(100000);
+
+            errno = 0;
+            test = read(fifoan, bufferan, 5);
+            
+            if (test == 0 || test == -1) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    
+                    // Nenhum syscall ou IRQX recebido
+                    continue;
+                }
+
+                else {
+                    perror("[KernelSim]: Erro ao tentar dar read para FIFOAN. Saindo...");
+                    exit(-37);
+                }
+            }
+
+            // else:
+            bufferD = bufferan[0];
+            bufferOp = bufferan[3];
+
+            if (bufferD == '1') {
+                push(&waitingD1, currentProcess);
+
+                currentInfo->state = WAITING_D1;
+                currentInfo->lastD = bufferD;
+                currentInfo->lastOp = bufferOp;
+                currentInfo->timesD1Acessed++;
+
+                test = kill(currentProcess, SIGSTOP);
+                if (test == -1) {
+                    perror("[KernelSim]: Erro ao enviar um SIGSTOP para um processo. Saindo...");
+                    exit(-38);
+                }
+
+            }
+
+            else if (bufferD == '2') {
+                push(&waitingD2, currentProcess);
+
+                currentInfo->state = WAITING_D2;
+                currentInfo->lastD = bufferD;
+                currentInfo->lastOp = bufferOp;
+                currentInfo->timesD2Acessed++;
+
+                test = kill(currentProcess, SIGSTOP);
+                if (test == -1) {
+                    perror("[KernelSim]: Erro ao enviar um SIGSTOP para um processo. Saindo...");
+                    exit(-39);
+                }
+            }
+
+            else {
+                perror("[KernelSim]: Erro: Opção invalida para dispositivo. Saindo...");
+                exit(-38);
+            }
+
+            // Sai do while pois recebeu um syscall e precisa escalonar outro processo
             break;
         }
 
-        currentProcess = pop(&ready);
-
-        // Pega a região da shmem específica para o processo atual
-        processNumberValue = getProcessNumber(currentProcess, pd);
-        currentInfo = info[processNumberValue - 1];
-        currentInfo->state = RUNNING;
-
-        // Continua um processo pronto (Primeiro da fila)
-        test = kill(currentProcess, SIGCONT);
-        if (test == -1) {
-            perror("[KernelSim]: Erro ao mandar um SIGCONT para algum AN. Saindo...");
-            exit(-18);
-        }
-
-        // Controle é desviado para currentProcess, então não precisa pausar.
-
-        // Controle voltou para KS devido a uma systemcall de currentProcess de R, W ou X para D1 ou D2, ou a um IRQ0 vindo de ICS
-        test = read(fifoan, bufferan, 5);
-        if (test < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Nenhum processo escreveu nada na FIFO
-                bufferD = EOF;
-            }
-
-            else {
-                perror("[KernelSim]: Erro ao ler da FIFOAN1. Saindo...");
-                exit(-22);
-            }
-        }
-
-        bufferD = bufferan[0];
-
-        //Atualiza o contador de programas de currentProcess
-        currentInfo->PC++;
-
-        if (bufferD == '1' || bufferD == '2'){
-            bufferOp = bufferan[3];
-
-            if (bufferOp == '1') {
-                // Dispositivo 1 acessado
-                currentInfo->timesD1Acessed++;
-                currentInfo->state = WAITING_D1;
-
-                // Coloca currentProcess na fila de espera para D1
-                push(&waitingD1, currentProcess);
-            }
-
-            else {
-                // Dispositivo 2 acessado
-                currentInfo->timesD2Acessed++;
-                currentInfo->state = WAITING_D2;
-
-                // Coloca currentProcess na fila de espera para D2
-                push(&waitingD2, currentProcess);
-            }
-
-            currentInfo->lastD = bufferD;
-            test = kill(currentProcess, SIGSTOP);
-            if (test == -1) {
-                if (errno != ESRCH) {
-                    perror("[KernelSim]: Erro ao mandar um SIGSTOP para um processo. Saindo...");
-                    exit(-33);
-                }
-            }
-
-            if (bufferOp == 'R' || bufferOp == 'W' || bufferOp == 'X') {
-                currentInfo->lastOp = bufferOp;
-
-            }
-
-            else {
-                if (bufferOp != 0) {
-                    perror("[KernelSim]: Erro: Opcao inexistente para bufferan2. Saindo...");
-                    exit(-24);
-                }
-            }
-        }
-
-        else if (bufferD == EOF) {
-            // currentProcess não escreveu em FIFOAN1, então não se faz nada
-        }
-
-        else {
-            // Erro
-            if (bufferD != 0) {
-                perror("[KernelSim]: Erro: Opcao inexistente para bufferan1. Saindo...");
-                exit(-23);
-            }
-        }
-
-
-        
         if (currentInfo->PC >= MAX) {
             currentInfo->state = TERMINATED;
             terminatedProcessess++;
         }
-        
-        //Tratamentos de sinais de ICS
-        test = kill(ICS, SIGCONT);
-        if (test == -1) {
-            perror("[KernelSim]: Erro ao mandar um SIGCONT para algum processo. Saindo...");
-            exit(-35);
-        }
 
-        pid_t runningPid = currentProcess;
-        Info *runningInfo = currentInfo;
-
-        while (!irq0Pending && !irq1Pending && !irq2Pending) {
-            test = kill(currentProcess, SIGCONT);
-            if (test == -1) {
-                if (errno != ESRCH) {
-                    perror("[KernelSim]: Erro ao mandar um SIGSTOP para um processo. Saindo...");
-                    exit(-33);
+        // Saiu do while por ter recebido um irq0
+        if (irq0Pending) {
+            if (currentInfo->state == RUNNING) {
+                
+                test = kill(currentProcess, SIGSTOP);
+                if (test == -1) {
+                    perror("[KernelSim]: Erro ao enviar um SIGSTOP para um processo. Saindo...");
+                    exit(-39);
                 }
+
+                currentInfo->state = STOPPED;
             }
+
+            irq0Pending = 0;
         }
 
-        processPendingInterrupts(&ready, &waitingD1, &waitingD2,
-                                 runningPid, runningInfo, pd, info);
-    }
+        // Saiu do while por ter recebido um irq1
+        else if(irq1Pending) {
+            if (!empty(&waitingD1)) {
+                syscalledProcess = pop(&waitingD1);
+                syscalledInfo = info[getProcessNumber(syscalledProcess, pd)];
+                syscalledInfo->state = READY;
+            }
 
+            push(&ready, syscalledProcess);
+            irq1Pending = 0;
+        }
+
+        // Saiu do while por ter recebido um irq2
+        else if (irq2Pending) {
+            if (!empty(&waitingD2)) {
+                    syscalledProcess = pop(&waitingD2);
+                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd)];
+                    syscalledInfo->state = READY;
+                }
+
+                push(&ready, syscalledProcess);
+                irq2Pending = 0;
+            }
+
+        // Processo ainda não foi recolocado na fila de prontos (Pode juntar com a condição do IRQ0?)
+        if (currentInfo->state != TERMINATED && currentInfo->state == STOPPED) {
+            push(&ready, currentProcess);
+            currentInfo->state = READY;
+        }
+    }
     //Fecha tudo e sai
 
     // Fecha as FIFOS

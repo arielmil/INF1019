@@ -2,11 +2,12 @@
 
 #define MAX 30
 
-#define STOPPED 0
+#define READY 0
 #define WAITING_D1 1
 #define WAITING_D2 2
 #define RUNNING 3
-#define TERMINATED 4
+#define STOPPED 4
+#define TERMINATED 5
 
 typedef struct info {
     char state; // 0: Interrompido por IRQ0, 1: Esperando Por IRQ1, 2: Esperando por IRQ2, 3: Rodando, 4: Terminado
