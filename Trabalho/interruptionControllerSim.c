@@ -9,6 +9,7 @@
 #include "irq.h"
 
 Info *info[5];
+int looping = 1;
 
 static const char *stateToString(char state) {
     switch (state) {
@@ -17,6 +18,7 @@ static const char *stateToString(char state) {
         case WAITING_D2:  return "ESPERANDO D2";
         case RUNNING:     return "RODANDO";
         case TERMINATED:  return "TERMINADO";
+        case READY:       return "PRONTO";
         default:          return "DESCONHECIDO";
     }
 }
@@ -45,8 +47,8 @@ static char normalizeOp(char op) {
     //return (op == 'R' || op == 'W' || op == 'X') ? op : '-';
 }
 
-void usr1Handler(int signum) {
-    // Fecha tudo
+void termHandler(int signum) {
+    looping = 0;
 }
 
 void interruptHandler(int signum) {
@@ -72,14 +74,14 @@ void interruptHandler(int signum) {
         timesD2Acessed  = info[i]->timesD2Acessed;
         pid             = info[i]->pid;
 
-        printf("Processo %d de PID %d:\n"
+        printf("Processo %d de PID %ld:\n"
                "Estado: %s\n"
                "Ultimo dispositivo acessado: %c\n"
                "Ultima operacao feita no dispositvo: %c\n"
                "PC: %d\n"
                "Quantidade de vezes que acessou D1: %d\n"
                "Quantidade de vezes que acessou D2: %d.\n\n",
-               i + 1, (int)pid, stateToString(state), normalizeDevice(lastD), normalizeOp(lastOp),
+               i + 1, (long)pid, stateToString(state), normalizeDevice(lastD), normalizeOp(lastOp),
                PC, timesD1Acessed, timesD2Acessed);
     }
 
@@ -123,13 +125,13 @@ int main(int argc, char *argv[]) {
     }
 
     signal(SIGINT, interruptHandler);
+    signal(SIGTERM, termHandler);
 
     srand((unsigned)(getpid() ^ time(NULL))); // Para seedar a função rand()
 
-    while(1) {
+    while(looping) {
         usleep(500000);
         
-        // Enviar SIGUSR1 para desvia o fluxo para cá
         kill(ks_pid, IRQ0);
 
         d = (rand()%1000) +1;
@@ -138,7 +140,6 @@ int main(int argc, char *argv[]) {
 
             // Chance de 0.5% de ocorrencia
             if (d <= 5) {
-                // Enviar SIGUSR1 para desvia o fluxo para cá
                 kill(ks_pid, IRQ2);
             }
 
@@ -149,4 +150,13 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+
+    // Fecha tudo e sai
+    shmdt(shmICSptr);
+
+    for(i = 0; i < 5; i++) {
+        shmdt(info[i]);
+    }
+
+    _exit(0);
 }

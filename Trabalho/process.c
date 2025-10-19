@@ -8,33 +8,16 @@
 #include <sys/shm.h> // Para shmget(), shmat(), shmdt() e shmctl()
 #include "info.h"
 
-/* OBS: Usarei duas FIFOS para IPC entre process e KS:
-
-        FIFOAN1 é usada para indicar qual dispositivo process está tentando acessar:
-
-            1: Dispositivo D1
-            2: Dispositivo D2
-
-        FIFOAN2 é usada para indicar qual operação process deseja fazer no dispositivo selecionado:
-
-            'R': Leitura
-            'W': Escrita
-            'X': Execução
-
-        KS deve atualizar o campo PC sempre que receber mensagens por uma das duas FIFOS,
-        porém deve apenas atualizar os campos timesD1acessed e timesD2acessed se uma mensagem por FIFO2 for enviada.
-*/
-
 // OBS: argv[0]: ./process, argv[1]: processNumber, argv[2]: shmIdProcess
 int main(int argc, char *argv[]) {
     char D, Op;
     char buffer[] = "D, O";
     char *mensagem;
-    int PC = 0;
     int d;
     int fifoan;
     int shmIdProcess;
     int processNumber; // [1..5]
+    int test;
 
     Info *info;
 
@@ -42,6 +25,9 @@ int main(int argc, char *argv[]) {
 
     // Sinaliza para ignorar um SIGINT
     signal(SIGINT, SIG_IGN);
+
+    // Caso o Kernel feche a FIFO antes do processo encerrar  
+    signal(SIGPIPE, SIG_IGN);
     
     if (argc < 3) {
         perror("Erro: Processo não recebeu o número de argumentos necessários. Saindo...\n");
@@ -52,7 +38,7 @@ int main(int argc, char *argv[]) {
 
     fifoan = open("FIFOAN", O_WRONLY); // Abre uma FIFO em modo de escrita bloqueante para sinalizar ao kernel a espera de IRQ0
     if (fifoan < 0) {
-        perror("Erro ao abrir a FIFO 'FIFOAN1' para escrita. Saindo...\n");
+        perror("Erro ao abrir FIFOAN para escrita. Saindo...\n");
         _exit(-2);
     }
 
@@ -73,7 +59,7 @@ int main(int argc, char *argv[]) {
 
     strcpy(mensagem, buffer);
 
-    while (PC < MAX) {
+    while (info->PC < MAX) {
         usleep(500000);
         
         d = (rand()%100) +1;
@@ -109,8 +95,11 @@ int main(int argc, char *argv[]) {
             mensagem[0] = D;
             mensagem[3] = Op;
 
-            write(fifoan, mensagem, strlen(mensagem) + 1);
-
+            test = write(fifoan, mensagem, 5);
+            if (test != 5) {
+                perror("[Process]: Erro ao usar write. Saindo...");
+                _exit(-41);
+            }
         }
 
         else {
@@ -122,7 +111,11 @@ int main(int argc, char *argv[]) {
         usleep(500000);
     }
 
+    // Fecha tudo e sai
+
     close(fifoan);
+
+    shmdt(info);
 
     _exit(0);
 }

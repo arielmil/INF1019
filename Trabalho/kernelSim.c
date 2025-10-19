@@ -7,7 +7,6 @@
 #include <sys/wait.h> //Para waitpid()
 #include <fcntl.h> // Para flags de controle de FIFO.
 #include <signal.h> // Para tratamento de sinais
-#include <sys/queue.h> // Para uso de filas
 #include <unistd.h> // Para pause()
 #include <errno.h>
 
@@ -79,7 +78,7 @@ int main(void) {
     char shmIdProcessString[23];
     char pid_kernelSimString[23];
 
-    int terminatedProcessess;
+    int terminatedProcessess = 0;
     int fifoan;
     int test;
     int i;
@@ -249,9 +248,6 @@ int main(void) {
     Info *currentInfo;
     Info *syscalledInfo;
 
-    int processNumberValue;
-
-
     /* 
         Fluxo de funcionamento:
 
@@ -294,7 +290,7 @@ int main(void) {
 
                 if (!empty(&waitingD1)) {
                     syscalledProcess = pop(&waitingD1);
-                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd)];
+                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd) - 1];
                     syscalledInfo->state = READY;
                     push(&ready, syscalledProcess);
                 }
@@ -303,11 +299,11 @@ int main(void) {
                 irq1Pending = 0;
             }
 
-            else if (irq1Pending) {
+            if (irq2Pending) {
 
                 if (!empty(&waitingD2)) {
                     syscalledProcess = pop(&waitingD2);
-                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd)];
+                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd) - 1];
                     syscalledInfo->state = READY;
                     push(&ready, syscalledProcess);
                 }
@@ -319,9 +315,9 @@ int main(void) {
 
         // A partir daqui é garantido que ready não está vazia
         currentProcess = pop(&ready);
-        currentInfo = info[getProcessNumber(currentProcess, pd)];
+        currentInfo = info[getProcessNumber(currentProcess, pd) - 1];
         
-        currentInfo->state == RUNNING;
+        currentInfo->state = RUNNING;
 
         test = kill(currentProcess, SIGCONT);
         if (test == -1) {
@@ -337,17 +333,16 @@ int main(void) {
             errno = 0;
             test = read(fifoan, bufferan, 5);
             
-            if (test == 0 || test == -1) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (test <= 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK || test == 0) {
                     
                     // Nenhum syscall ou IRQX recebido
                     continue;
                 }
 
-                else {
-                    perror("[KernelSim]: Erro ao tentar dar read para FIFOAN. Saindo...");
-                    exit(-37);
-                }
+                // else:
+                perror("[KernelSim]: Erro ao tentar dar read para FIFOAN. Saindo...");
+                exit(-37);
             }
 
             // else:
@@ -365,7 +360,7 @@ int main(void) {
                 test = kill(currentProcess, SIGSTOP);
                 if (test == -1) {
                     perror("[KernelSim]: Erro ao enviar um SIGSTOP para um processo. Saindo...");
-                    exit(-38);
+                    exit(-41);
                 }
 
             }
@@ -406,7 +401,7 @@ int main(void) {
                 test = kill(currentProcess, SIGSTOP);
                 if (test == -1) {
                     perror("[KernelSim]: Erro ao enviar um SIGSTOP para um processo. Saindo...");
-                    exit(-39);
+                    exit(-40);
                 }
 
                 currentInfo->state = STOPPED;
@@ -416,26 +411,26 @@ int main(void) {
         }
 
         // Saiu do while por ter recebido um irq1
-        else if(irq1Pending) {
+        if(irq1Pending) {
             if (!empty(&waitingD1)) {
                 syscalledProcess = pop(&waitingD1);
-                syscalledInfo = info[getProcessNumber(syscalledProcess, pd)];
+                syscalledInfo = info[getProcessNumber(syscalledProcess, pd) - 1];
                 syscalledInfo->state = READY;
+                push(&ready, syscalledProcess);
             }
 
-            push(&ready, syscalledProcess);
             irq1Pending = 0;
         }
 
         // Saiu do while por ter recebido um irq2
-        else if (irq2Pending) {
+        if (irq2Pending) {
             if (!empty(&waitingD2)) {
                     syscalledProcess = pop(&waitingD2);
-                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd)];
+                    syscalledInfo = info[getProcessNumber(syscalledProcess, pd) - 1];
                     syscalledInfo->state = READY;
+                    push(&ready, syscalledProcess);
                 }
 
-                push(&ready, syscalledProcess);
                 irq2Pending = 0;
             }
 
@@ -447,8 +442,10 @@ int main(void) {
     }
     //Fecha tudo e sai
 
-    // Fecha as FIFOS
+    // Fecha a e unlinka a FIFO
     close(fifoan);
+
+    unlink("FIFOAN");
 
     // Dettacha e deleta as shm
     for (i = 0; i < 5; i++) {
@@ -472,6 +469,7 @@ int main(void) {
     }
 
     // Encerra o ICS
+    
     test = kill(ICS, SIGTERM);
     if (test == -1) {
         perror("[KernelSim]: Erro ao tentar encerrar ICS. Saindo...");
