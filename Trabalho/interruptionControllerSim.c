@@ -10,6 +10,7 @@
 
 Info *info[5];
 int looping = 1;
+static volatile sig_atomic_t wantBriefing = 0;
 
 static const char *stateToString(char state) {
     switch (state) {
@@ -52,44 +53,35 @@ void termHandler(int signum) {
 }
 
 void interruptHandler(int signum) {
-    // Faz o briefing
-    int ch;
+    wantBriefing = 1;
+}
 
-    char state; // 0: Interrompido por IRQ0, 1: Esperando Por IRQ1, 2: Esperando por IRQ2, 3: Rodando, 4: Terminado
-    char lastD; // 1 para D1 ou 2 para D2
-	char lastOp; // Qual foi a última operação que este processo fez em D1 ou D2
-    int PC; // Contador de Programa
-    int timesD1Acessed; // Quantas vezes D1 foi acessado por processo com esta pid
-    int timesD2Acessed; // Quantas vezes D2 foi acessado por processo com esta pid
-    pid_t pid; //Qual o pid do processo
+void doBriefing(void) {
+    int i;
 
     printf("[ICS]: Briefing do estado de todos os processos AN:\n");
-    for (int i = 0; i < 5; i++) {
-
-        state           = info[i]->state;
-        lastD           = info[i]->lastD;
-        lastOp          = info[i]->lastOp;
-        PC              = info[i]->PC;
-        timesD1Acessed  = info[i]->timesD1Acessed;
-        timesD2Acessed  = info[i]->timesD2Acessed;
-        pid             = info[i]->pid;
+    for (i = 0; i < 5; i++) {
+        char state          = info[i]->state;
+        char lastD          = info[i]->lastD;
+        char lastOp         = info[i]->lastOp;
+        int  PC             = info[i]->PC;
+        int  timesD1Acessed = info[i]->timesD1Acessed;
+        int  timesD2Acessed = info[i]->timesD2Acessed;
+        pid_t pid           = info[i]->pid;
 
         printf("Processo %d de PID %ld:\n"
                "Estado: %s\n"
                "Ultimo dispositivo acessado: %c\n"
-               "Ultima operacao feita no dispositvo: %c\n"
+               "Ultima operacao feita no dispositivo: %c\n"
                "PC: %d\n"
                "Quantidade de vezes que acessou D1: %d\n"
                "Quantidade de vezes que acessou D2: %d.\n\n",
-               i + 1, (long)pid, stateToString(state), normalizeDevice(lastD), normalizeOp(lastOp),
+               i + 1, (long)pid,
+               stateToString(state),
+               normalizeDevice(lastD),
+               normalizeOp(lastOp),
                PC, timesD1Acessed, timesD2Acessed);
     }
-
-    printf("Digite qualquer coisa para continuar...\n");
-    while ((ch = getchar()) != '\n' && ch != EOF);
-    fflush(stdout);
-
-    return;
 }
 
 //argv[1]: pid de kernelSim, argv[2]: shmIdICS
@@ -132,6 +124,11 @@ int main(int argc, char *argv[]) {
     while(looping) {
         usleep(500000);
         
+        if(wantBriefing) {
+            doBriefing();
+            wantBriefing = 0;
+        }
+
         kill(ks_pid, IRQ0);
 
         d = (rand()%1000) +1;

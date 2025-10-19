@@ -1,6 +1,6 @@
 #include <sys/types.h> // Para tipos como pid_t
 
-#define MAX 30
+#define MAX 10
 
 #define READY 0
 #define WAITING_D1 1

@@ -441,6 +441,7 @@ int main(void) {
         }
     }
     //Fecha tudo e sai
+    printf("\nTodos os processos acabaram de rodar. Encerrando...\n");
 
     // Fecha a e unlinka a FIFO
     close(fifoan);

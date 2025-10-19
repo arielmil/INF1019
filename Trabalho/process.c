@@ -63,7 +63,7 @@ int main(int argc, char *argv[]) {
         usleep(500000);
         
         d = (rand()%100) +1;
-        printf("Valor de d: %d em A%d (pid: %ld)\n", d, processNumber, (long) pid);
+        printf("\nValor de d: %d em A%d (pid: %ld)\n", d, processNumber, (long) pid);
 
         if (d < 15) { // generate a random syscall
             // Prob de ocorrencia de 15%
@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
 
         else {
             // Prob de ocorrencia de 75%
-            printf("[Processo %d]: Esperando seu tempo de rodar acabar.\n", processNumber);
+            printf("\n[Processo %d]: Esperando seu tempo de rodar acabar.\n", processNumber);
         }
 
         info->PC++;
@@ -112,6 +112,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Fecha tudo e sai
+    printf("\nProcesso %d acabou de rodar.\n", processNumber);
 
     close(fifoan);
 
