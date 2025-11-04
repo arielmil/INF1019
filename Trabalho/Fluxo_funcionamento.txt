@@ -1,0 +1,168 @@
+Fluxo de funcionamento kernelSim:
+
+
+
+1: Inicializa FIFOAN
+2: Inicializa a shmem de info[] que compartilha com ICS
+3: Inicializa os 5 ANs e os coloca em estado de STOPPED
+4: Inicializa ICS passando para ele o shmid da shmem ICS aonde estão armazenados os 5 shmid de cada info, e o pid de kernelSim (getpid())
+5: Coloca os 5 ANs na fila de prontos
+
+6: Começa o escalonamento:
+	
+	6.1: while(empty(ready)):
+		
+		6.1.1: sleep(0.1s)
+
+		6.1.2: Se recebeu um irq1: 
+                      
+		      Se !(empty(waitingD1)):
+
+                      		tempProcess = pop(waitingD1), 
+		      		Info[tempProcess]->state = READY,
+		      		push(ready, tempProcess)
+
+                      coloca pendingIrq1 como 0
+
+		6.1.3: Se recebeu um irq2:
+		      
+		      Se !(empty(waitingD2)):
+
+                      		tempProcess = pop(waitingD2)
+				Info[tempProcess]->state = READY,
+		      		push(ready, tempProcess)
+
+                      coloca pendingIrq2 como 0
+
+	6.2: currentProcess = pop(ready)
+
+	6.3: Manda um SIGCONT para currentProcess, e coloca o estado dele como RUNNING
+
+	6.4: Entra em um while checando se recebeu um irq0, irq1 ou irq2, ou um syscall
+		
+		6.4.1: Da um sleep(0.1s) para dar chance para ICS ou currentProcess serem escalonados
+
+		6.4.2: Da um read(FIFOAN) e checa se recebeu alguma mensagem
+
+		6.4.3: Se recebeu:
+		
+			6.4.3.1: Caso seja um request para usar D1 ou D2:
+			
+				- Caso D1: 
+				           
+				           Dar um push(waitingD1, currentProcess), 
+				           Colocar o estado de currentProcess como WAITING_D1
+				           Fazer Info[currentProcess]->TimesD1Acessed++,
+				           Fazer kill(currentProcess, SIGSTOP)
+
+				- Caso D2:
+
+				           Dar um push(waitingD2, currentProcess), 
+				           Colocar o estado de currentProcess como WAITING_D2
+				           Fazer Info[currentProcess]->TimesD2Acessed++,
+				           Fazer kill(currentProcess, SIGSTOP)
+
+			6.4.3.2: Da um break no while
+
+		6.4.4: Se não recebeu:
+		
+			1: Continua esperando um sinal de irq0, irq1 ou irq2
+
+	6.5: Sai do while pois recebeu um irq0, irq1 ou irq2 ou um syscall
+
+		6.5.1: Caso Info[currentProcess]->PC >= MAX, faz Info[currentProcess]->state = TERMINATED, e terminatedProcessess++
+		
+		6.5.2: Chegou um irq0:
+			
+			Se Info[currentProcess]->state == RUNNING
+			
+				Manda um SIGSTOP para currentProcess, coloca o estado dele como STOPPED
+
+			Coloca pendingirq0 como 0 independente do if acima (Se Info[currentProcess]->state == RUNNING)
+		
+		6.5.3: Chegou um irq1:
+			
+			Se !empty(waitingD1):
+
+				Faz um syscalledProcess = pop(waitingD1) , push(syscalledProcess, ready)			
+				Faz Info[syscalledProcess]->state = READY
+
+			Coloca pendingirq1 como 0
+
+		6.5.4: Chegou um irq2:
+			
+			Se !empty(waitingD2):
+
+				Faz um syscalledProcess = pop(waitingD2) (If (!empty(waitingD2)) ), push(syscalledProcess, ready)			
+				Faz Info[syscalledProcess]->state = READY
+			Coloca pendingirq2 como 0
+
+		6.5.5: Caso Info[currentProcess]->state != TERMINATED e Info[currentProcess]->state == STOPPED (Saiu do while por um IRQ0), coloca ele novamente na fila de prontos
+			Faz Info[currentProcess]->state = READY
+				
+		6.5.6: Checa se terminatedProcessess < 5:
+			
+			- Se for volta para o passo 6.1
+			- Se não for, passa para o passo 7
+
+	7: Fecha FIFOAN
+	8: Da dettach nas shmem de Info, e de ICS
+	9: Manda um sinal para ICS para dar dettach na shmem de ICS e de Info
+	10: Exclui as shmem de Info e de ICS
+	11: Manda um SIGQUIT para todos os AN e da um waitpid(AN) para evitar filho zumbi
+	12: Manda um SIGQUIT para ICS e da um waitpid(ICS) para evitar filho zumbi
+	13: return 0
+
+
+Fluxo de funcionamento de ICS:
+
+	1: Faz signal(SIGINT, intHandler), e signal(SIGUSR1, sigusr1Handler)
+		
+		1.1: intHandler faz o briefing quando usuário envia um SIGINT com Ctrl-C
+		1.2: sigusr1Handler indica o término do processo ICS, da dettach nas shmem de Info e de ICS
+
+	2: Preenche o array de Info usando os shmId que a shmem ICS aponta
+	3: Seeda uma função rand
+	
+	4: Entra em um while(1) até ser encerrado por um sinal SIGUSR1
+		
+		4.1: dorme 0.5segs
+		4.2: Envia um SIGIRQ0 para o kernelSim
+		4.3: Tira uma probabilidade randomica e atribui a uma variavel d (1 a 1000)
+		
+		4.4: Caso d <= 5 (0.5% de chance), envia um SIGIRQ2 para kernelSim
+		4.5: Caso d <= 10 e > 5 (10% de chance), envia um SIGIRQ1 para kernelSim
+		
+		4.6: Volta para o passo 4.1
+
+
+
+Fluxo de funcionamento de process:
+	1: Dorme por 0.5s
+	2: Da shmatt na Info dele
+	3: Seeda uma função rand
+	4: Entra num while(PC < MAX)
+	
+		4.1: Dorme por 0.5s
+		4.2: Tira uma probabilidade randomica e atribui a uma variavel d (1 a 100)
+
+		4.3: se d < 15 (15% de chance):
+
+			4.3.1: Se d for par, setar o dispositivo D como D1
+			4.3.2: Se d for impar, setar o dispositivo D como D2
+			4.3.3: Se d%3 = 0, setar a operacao Op como 'R'
+			4.3.4: Se d%3 = 1, setar a operacao Op como 'W'
+			4.3.5: Caso contrário, setar a operacao Op como 'X'
+			4.3.6: Escrever em FIFOAN o valor de D e Op
+			4.3.7: Dorme por 0.5s
+		
+		4.4: Faz Info->PC++
+	
+	5: Saindo do while, fecha FIFOAN	
+	6: _exit(0)
+
+
+Duvidas: Como fazer ICS voltar a continuar depois que ele manda algum IRQ para o KernelSim?
+
+R: Ele não precisa voltar a funcionar, kill() não desvia o fluxo para outro processo, o sinal é enviado apenas quando houver troca de contexto, que provavelmente ocorrerá durante o sleep().
+
