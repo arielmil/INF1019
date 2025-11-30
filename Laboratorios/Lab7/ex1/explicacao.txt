@@ -1,0 +1,23 @@
+Quando o programa é executado com algum argumento na command line, 
+    ele cria a estrutura de semaforos que será usada pelas demais execuções deste programa,
+    e letra é definida como "x"
+    
+    Caso o programa seja executado sem flag alguma, 
+    ele fica em espera ocupada tentando criar essa estrutura até conseguir,
+    e a letra é mantida como o seu default "o".
+    
+    Em qualquer um dos dois casos, quando o programa entra no for, 
+    ele entra numa região crítica que está definida entre as operações "semaforoP" (Up), e "semaforoV" (Down).
+
+    Dentro dessa região crítica, ele printa um par de "letra" que serão sempre consecutivos,
+    ou seja, sem nenhuma chance de qualquer outra coisa (inclusive outras iterações de outros processos desse for printando "letra"s)
+    A primeira maiúscula, e a segunda minuscula.
+
+    Apesar de o processo dormir dentro da região crítica, nenhum outro processo pode entrar nessa mesma região,
+    enquanto o processo que está atualmente dentro dela, sair dela com a operação "semaforoV".
+
+    Após fazer isso 10 vezes (10 entradas e 10 saídas da região crítica), o processo printa uma mensagem indicando seu término.
+
+    Em outras palavras, apesar de ser possível que entre as 10 vezes que um processo está iterando dentro desse for,
+    algum outro processo entra na região crítica (E pode outputar alguma outra letra que não seja aquela que o primeiro processo está em sequencia de outputar),
+    É impossível que um par de "letra"s não seja colocado na sequencia Maisucula-Minuscula pelo mesmo processo.
