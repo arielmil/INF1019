@@ -11,7 +11,7 @@ int semid;
 int shmid;
 
 union semun { 
-    int val; 
+    int val;
     struct semid_ds *buf; 
     ushort *array; 
 };

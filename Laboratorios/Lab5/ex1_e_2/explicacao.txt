@@ -1,0 +1,53 @@
+Está ocorrendo o seguinte problema:
+
+Sapos diferentes chegam na mesma posição, por exemplo como mostra a seguinte execução:
+
+"
+
+Corrida iniciada ... 
+Sapo 0 pulou
+Sapo 0 vai dormir por 0 segundos.
+Sapo 1 pulou
+Sapo 1 vai dormir por 0 segundos.
+Sapo 0 pulou
+Sapo 0 vai dormir por 0 segundos.
+Sapo 1 pulou
+Sapo 1 vai dormir por 0 segundos.
+Sapo 2 pulou
+
+Sapo 1 chegou na posicaoo 1 com 2 pulos
+
+
+Sapo 0 chegou na posicaoo 1 com 2 pulos
+
+Sapo 2 vai dormir por 0 segundos.
+Sapo 3 pulou
+Sapo 3 vai dormir por 0 segundos.
+Sapo 4 pulou
+Sapo 4 vai dormir por 0 segundos.
+Sapo 4 pulou
+Sapo 4 vai dormir por 0 segundos.
+Sapo 3 pulou
+Sapo 3 vai dormir por 0 segundos.
+Sapo 2 pulou
+Sapo 2 vai dormir por 0 segundos.
+
+Sapo 3 chegou na posicaoo 3 com 2 pulos
+
+
+Sapo 2 chegou na posicaoo 3 com 2 pulos
+
+
+Sapo 4 chegou na posicaoo 3 com 2 pulos
+
+
+Acabou!!
+
+"
+
+Os sapos 1 e 0 chegaram ambos na posição 1.
+Os sapos 3 2 e 4 chegaram todos na posição 2.
+
+Isso ocorre pois a linha que printa a classificação vem antes da linha aonde se incrementa a mesma, ou seja, se vários sapos chegarem com o mesmo número de pulos no final da corrida, quando um for printar a mensagem de classificação, existe possibilidade do escalonador escalonar alguma das outras threads de sapos que chegaram com o mesmo número de pulos. Como classificação ainda não foi incrementada, os sapos todos printaram a mensagem de classificação com o mesmo valor de classificação entre eles.
+
+Para resolver isso, basta tornar a parte do print (E as de incremento só para garantir) uma região critica.
