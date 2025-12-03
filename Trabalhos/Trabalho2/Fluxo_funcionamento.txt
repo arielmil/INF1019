@@ -1,0 +1,416 @@
+Fluxo de funcionamento kernelSim:
+
+	1: Inicializa FIFOAN
+	2: Inicializa a shmem de info[] que compartilha com ICS
+	3: Inicializa os 5 ANs e os coloca em estado de STOPPED
+	4: Inicializa ICS passando para ele o shmid da shmem ICS aonde estão armazenados os 5 shmid de cada info, e o pid de kernelSim (getpid())
+	5: Coloca os 5 ANs na fila de prontos
+
+	6: Registra os tratadores de sinal para as interrupções:
+
+
+		6.1: signal(IRQ0, irq0Handler)  → irq0Handler faz irq0Pending = 1
+		6.2: signal(IRQ1, irq1Handler)  → irq1Handler faz irq1Pending = 1
+		6.3: signal(IRQ2, irq2Handler)  → irq2Handler faz irq2Pending = 1
+		
+	7: Inicializa o socket UDP cliente para falar com o SFSS (Simple File System Server)
+
+		7.1: Cria o socket UDP
+		7.2: Preenche a estrutura de endereço do SFSS (IP/porta combinados com SFSS)
+		7.3: Configura o socket como não bloqueante
+
+	8: Inicializa as filas de escalonamento e de espera:
+
+		8.1: Inicializa a fila de prontos ready
+		8.2: Inicializa a fila waitingFile (processos bloqueados esperando resposta de operação de arquivo: read/write)
+		8.3: Inicializa a fila waitingDir (processos bloqueados esperando resposta de operação de diretório: add/rem/listdir)
+		8.4: Inicializa a fila fileReplyQueue (respostas de arquivo recebidas do SFSS, ainda não entregues)
+		8.5: Inicializa a fila dirReplyQueue (respostas de diretório recebidas do SFSS, ainda não entregues)
+
+	9: Começa o escalonamento:
+
+		9.1: Enquanto terminatedProcesses < 5:
+		
+			9.1.1: while(empty(ready)):
+				
+				9.1.1.1: Faz uma checagem não bloqueante por respostas UDP do SFSS:
+
+					- Tenta um recvfrom no socket UDP
+					- Se recebeu alguma resposta xx-REP:
+						
+						- Se for resposta de arquivo (RD-REP ou WR-REP), dá um push(fileReplyQueue, reply)
+						- Se for resposta de diretório (DC-REP, DR-REP ou DL-REP), dá um push(dirReplyQueue, reply)
+
+				9.1.1.2: Checa se irq1Pending ou irq2Pending foram setados pelos handlers:
+
+					9.1.1.2.1: Se irq1Pending == 1:
+
+						- Se !(empty(fileReplyQueue)):
+
+							- reply = pop(fileReplyQueue)
+							- owner = reply.hdr.owner
+							- Copia os dados de reply para os campos de retorno da Info[owner]
+							- Se Info[owner]->state == WAITING_FILE:
+
+								- Info[owner]->state = READY
+								- push(ready, owner)
+
+						- Coloca irq1Pending = 0
+
+					9.1.1.2.2: Se irq2Pending == 1:
+
+						- Se !(empty(dirReplyQueue)):
+
+							- reply = pop(dirReplyQueue)
+							- owner = reply.hdr.owner
+							- Copia os dados de reply para os campos de retorno da Info[owner]
+							- Se Info[owner]->state == WAITING_DIR:
+
+								- Info[owner]->state = READY
+								- push(ready, owner)
+
+						- Coloca irq2Pending = 0
+
+				9.1.1.3: sleep(0.1s)
+
+			9.1.2: currentProcess = pop(ready)
+
+			9.1.3: Manda um SIGCONT para currentProcess e coloca Info[currentProcess]->state = RUNNING
+
+			9.1.4: Entra em um while(1) checando se recebeu syscall do currentProcess ou alguma IRQ:
+
+				9.1.4.1: sleep(0.1s)
+
+				9.1.4.2: Faz uma checagem não bloqueante por respostas UDP do SFSS (mesma lógica de 9.1.1.1):
+
+					- Qualquer reply recebida é apenas enfileirada em fileReplyQueue ou dirReplyQueue
+
+				9.1.4.3: Tenta ler de FIFOAN para ver se recebeu alguma mensagem de syscall de sistema de arquivos do currentProcess
+
+				9.1.4.4: Se recebeu uma mensagem de syscall do currentProcess:
+
+					9.1.4.4.1: Lê da FIFO o tipo de operação (read, write, add, rem, listdir) e seus parâmetros (path relativo, nomes, payload de 16 bytes, offset, etc)
+
+					9.1.4.4.2: Monta a mensagem SFP correspondente (xx-REQ):
+
+						- Para operação de arquivo:
+
+							- Se for read:
+								
+								* Preenche um sfp_rd_req_t:
+								
+									req.hdr.type    = SFP_RD_REQ
+									req.hdr.owner   = currentProcess
+									req.path        = path
+									req.strlen_path = strlen(path)
+									req.payload     = zerado
+									req.offset      = offset
+
+							- Se for write:
+								
+								* Preenche um sfp_wr_req_t:
+
+									req.hdr.type    = SFP_WR_REQ
+									req.hdr.owner   = currentProcess
+									req.path        = path
+									req.strlen_path = strlen(path)
+									req.payload     = payload (16 bytes)
+									req.offset      = offset
+
+						- Para operação de diretório:
+
+							- Se for add:
+
+								* Preenche um sfp_dc_req_t:
+
+									req.hdr.type        = SFP_DC_REQ
+									req.hdr.owner       = currentProcess
+									req.path            = path
+									req.strlen_path     = strlen(path)
+									req.dirname         = dirname
+									req.strlen_dirname  = strlen(dirname)
+
+							- Se for rem:
+
+								* Preenche um sfp_dr_req_t:
+
+									req.hdr.type        = SFP_DR_REQ
+									req.hdr.owner       = currentProcess
+									req.path            = path
+									req.strlen_path     = strlen(path)
+									req.name            = name
+									req.strlen_name     = strlen(name)
+
+							- Se for listdir:
+
+								* Preenche um sfp_dl_req_t:
+
+									req.hdr.type        = SFP_DL_REQ
+									req.hdr.owner       = currentProcess
+									req.path            = path
+									req.strlen_path     = strlen(path)
+
+					9.1.4.4.3: Faz um sendto no socket UDP enviando a xx-REQ para o SFSS
+
+					9.1.4.4.4: Coloca o currentProcess na fila de espera adequada:
+
+						- Se a syscall era read/write:
+
+							* Info[currentProcess]->state = WAITING_FILE
+							* push(waitingFile, currentProcess)
+
+						- Se a syscall era add/rem/listdir:
+
+							* Info[currentProcess]->state = WAITING_DIR
+							* push(waitingDir, currentProcess)
+
+					9.1.4.4.5: Faz kill(currentProcess, SIGSTOP)
+
+					9.1.4.4.6: Dá um break no while (sai para tratar o fim do quantum / IRQs em 9.1.5)
+
+				9.1.4.5: Se não recebeu syscall:
+
+					9.1.4.5.1: Checa se irq0Pending, irq1Pending ou irq2Pending foram setados:
+
+						- Se irq0Pending == 1 ou irq1Pending == 1 ou irq2Pending == 1:
+
+							* Dá um break no while para tratar as interrupções em 9.1.5
+
+						- Caso contrário:
+
+							* Continua no while (volta para 9.1.4.1)
+
+			9.1.5: Sai do while porque o processo fez syscall (e foi colocado em WAITING_FILE / WAITING_DIR) ou porque chegou algum IRQ
+
+				9.1.5.1: Caso Info[currentProcess]->PC >= MAX:
+
+					- Info[currentProcess]->state = TERMINATED
+					- terminatedProcesses++
+
+				9.1.5.2: Se irq0Pending == 1 (IRQ0 chegou):
+
+					- Se Info[currentProcess]->state == RUNNING:
+
+						* kill(currentProcess, SIGSTOP)
+						* Info[currentProcess]->state = STOPPED
+
+					- Coloca irq0Pending = 0
+
+				9.1.5.3: Se irq1Pending == 1 (IRQ1 chegou):
+
+					- Mesma lógica de 9.1.1.2.1:
+
+						* Se !(empty(fileReplyQueue)):
+
+							+ reply = pop(fileReplyQueue)
+							+ owner = reply.hdr.owner
+							+ Copia os dados de reply para os campos de retorno da Info[owner]
+							+ Se Info[owner]->state == WAITING_FILE:
+
+								- Info[owner]->state = READY
+								- push(ready, owner)
+
+					- Coloca irq1Pending = 0
+
+				9.1.5.4: Se irq2Pending == 1 (IRQ2 chegou):
+
+					- Mesma lógica de 9.1.1.2.2:
+
+						* Se !(empty(dirReplyQueue)):
+
+							+ reply = pop(dirReplyQueue)
+							+ owner = reply.hdr.owner
+							+ Copia os dados de reply para os campos de retorno da Info[owner]
+							+ Se Info[owner]->state == WAITING_DIR:
+
+								- Info[owner]->state = READY
+								- push(ready, owner)
+
+					- Coloca irq2Pending = 0
+
+				9.1.5.5: Caso Info[currentProcess]->state != TERMINATED e Info[currentProcess]->state == STOPPED (ou seja, saiu apenas por IRQ0, fim de quantum):
+
+					- Coloca currentProcess novamente na fila de prontos:
+						
+						* Info[currentProcess]->state = READY
+						* push(ready, currentProcess)
+
+			9.1.6: Volta para o passo 9.1.1 (próxima iteração do escalonador)
+		
+	10: Fecha FIFOAN
+	11: Dá dettach na shmem de Info e na shmem de ICS
+	12: Manda um sinal para ICS para dar dettach nas shmem de ICS e de Info
+	13: Fecha o socket UDP com o SFSS
+	14: Exclui as shmem de Info e de ICS
+	15: Manda um SIGQUIT para todos os AN e dá um waitpid(AN) para evitar filho zumbi
+	16: Manda um SIGQUIT para ICS e dá um waitpid(ICS) para evitar filho zumbi
+	17: return 0
+	
+
+Fluxo de funcionamento de ICS:
+
+	1: Faz signal(SIGINT, intHandler), e signal(SIGUSR1, sigusr1Handler)
+	
+		1.1: intHandler faz o briefing quando usuário envia um SIGINT com Ctrl-C  
+			 (mostra estado dos ANs e estatísticas de IRQs/FS se desejado)
+
+		1.2: sigusr1Handler indica o término do processo ICS, da dettach nas shmem de Info e de ICS e encerra o loop principal
+
+	2: Preenche o array de Info usando o shmId que a shmem ICS aponta
+
+	3: Seeda uma função rand
+
+	4: Entra em um while(1) até ser encerrado por um sinal SIGUSR1
+
+		4.1: Dorme 0.5s
+
+		4.2: Escreve na shmem ICS que pendingIrq0 = 1
+
+		4.3: Gera uma probabilidade randômica d (1 a 1000)
+
+		4.4: Caso d <= 100 (10% de chance):
+
+			- Escreve na shmem ICS que pendingIrq1 = 1  (interrupção de “resposta de arquivo”)
+
+		4.5: Caso d > 100 e d <= 120 (2% de chance):
+
+			- Escreve na shmem ICS que pendingIrq2 = 1  (interrupção de “resposta de diretório”)
+
+		4.6: Envia o sinal SIGIRQ0 para o kernelSim (para representar o timer do processador)
+
+		4.7: Caso pendingIrq1 == 1, envia também SIGIRQ1 para o kernelSim
+
+		4.8: Caso pendingIrq2 == 1, envia também SIGIRQ2 para o kernelSim
+
+		4.9: Volta para o passo 4.1
+
+
+Fluxo de funcionamento de process:
+
+
+	1: Dorme por 0.5s
+
+	2: Da shmat na sua própria Info (Info[meuIndice])
+
+	3: Seeda uma função rand
+
+	4: Abre FIFOAN em modo escrita (para enviar syscalls ao kernelSim)
+
+	5: Entra num while(Info->PC < MAX)
+
+		5.1: Dorme por 0.5s
+
+		5.2: Tira uma probabilidade randômica e atribui a uma variável d (1 a 100)
+
+		5.3: Se d < 15 (15% de chance), decide fazer uma syscall de sistema de arquivos:
+
+			5.3.1: Decide se a operação será de ARQUIVO ou de DIRETÓRIO  
+				   (por exemplo, se d for par → arquivo; se d for ímpar → diretório)
+
+			5.3.2: Caso operação de ARQUIVO:
+
+				- Se d % 2 == 0, escolhe operação read  
+				- Se d % 2 == 1, escolhe operação write  
+				- Gera um nome de arquivo relativo (por exemplo "dirX/fileY")  
+				- Gera um offset aleatório em {0,16,32,48,64,80,96}  
+				- Preenche os campos de parâmetros na sua Info (path, offset, payload se for write)  
+				- Escreve na FIFOAN uma mensagem indicando:
+					- pid ou índice do processo
+					- tipo de operação (read/write)
+					- demais parâmetros
+				- Dorme por 0.5s para dar tempo de kernelSim ler a syscall
+
+			5.3.3: Caso operação de DIRETÓRIO:
+
+				- Decide entre add, rem ou listdir usando d % 3:
+					- d % 3 == 0 → add
+					- d % 3 == 1 → rem
+					- d % 3 == 2 → listdir
+				- Gera um path relativo (por exemplo ".", "dirX", etc.)
+				- Gera (quando necessário) um nome de subdiretório ou arquivo  
+				- Preenche os campos de parâmetros na Info  
+				- Escreve na FIFOAN uma mensagem de syscall com esses dados  
+				- Dorme por 0.5s
+
+		5.4: Faz Info->PC++
+
+	6: Ao sair do while, fecha FIFOAN
+
+	7: _exit(0)
+
+
+Fluxo de funcionamento de SFSS:
+
+	1: Lê, via argumentos ou variável de ambiente, o diretório raiz onde vai operar (SFSS-root-dir)
+
+	2: Cria o socket UDP servidor
+
+	3: Faz bind() do socket UDP na porta combinada com o kernelSim
+
+	4: Entra em um while(1) para atender requisições SFP
+
+		4.1: Faz um recvfrom() bloqueante aguardando uma mensagem do kernelSim
+
+		4.2: Ao receber, interpreta o cabeçalho (hdr.type, hdr.owner) para saber o tipo de requisição:
+
+			4.2.1: Se for RD-REQ (leitura de arquivo):
+
+				- Monta o caminho físico completo usando:
+					- SFSS-root-dir + "/A<owner>" + "/" + path
+				- Abre o arquivo em modo leitura
+				- Faz um lseek até o offset requisitado
+				- Tenta ler 16 bytes
+				- Preenche uma RD-REP com:
+					- payload contendo os bytes lidos (se sucesso)
+					- offset >= 0 se sucesso, < 0 em caso de erro
+				- Faz sendto() devolvendo a RD-REP para o kernelSim
+
+			4.2.2: Se for WR-REQ (escrita de arquivo):
+
+				- Monta o caminho físico completo
+				- Cria o arquivo se não existir (abrindo em modo criação/leitura+escrita)
+				- Faz um lseek até o offset requisitado
+				- Escreve os 16 bytes de payload no arquivo
+				- Atualiza o tamanho (EOF) do arquivo se necessário
+				- Preenche uma WR-REP com:
+					- offset >= 0 sinalizando o novo EOF ou o offset escrito
+					- offset < 0 em caso de erro
+				- Faz sendto() devolvendo a WR-REP
+
+			4.2.3: Se for DC-REQ (add, criação de diretório):
+
+				- Monta o caminho físico completo SFSS-root-dir + "/A<owner>" + "/" + path + "/" + dirname
+				- Tenta criar o diretório (mkdir)
+				- Se sucesso:
+					- Monta um path lógico retornado (path + "/" + dirname)
+					- Preenche DC-REP com strlen_path >= 0
+				- Se erro:
+					- Preenche DC-REP com strlen_path < 0
+				- Faz sendto() devolvendo a DC-REP
+
+			4.2.4: Se for DR-REQ (rem, remoção de arquivo ou diretório vazio):
+
+				- Monta o caminho físico completo
+				- Tenta remover o nome passado (unlink ou rmdir, conforme necessário)
+				- Se sucesso:
+					- Monta path lógico sem o sufixo removido
+					- Preenche DR-REP com strlen_path >= 0
+				- Se erro:
+					- Preenche DR-REP com strlen_path < 0
+				- Faz sendto() devolvendo a DR-REP
+
+			4.2.5: Se for DL-REQ (listdir, listagem de diretório):
+
+				- Monta o caminho físico completo do diretório a listar
+				- Abre o diretório e itera sobre as entradas
+				- Para cada entrada válida:
+					- Copia o nome para allfilenames em sequência
+					- Preenche uma posição em positions[] com:
+						- índices first/last dentro de allfilenames
+						- flag is_dir = 1 se for subdiretório, 0 se for arquivo
+					- Incrementa nrnames
+				- Se ocorreu erro, seta nrnames < 0
+				- Preenche DL-REP com path e nrnames
+				- Faz sendto() devolvendo a DL-REP
+
+		4.3: Volta para o passo 4.1 (próxima requisição)
