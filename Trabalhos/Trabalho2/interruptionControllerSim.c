@@ -14,15 +14,16 @@ static volatile sig_atomic_t wantBriefing = 0;
 
 static const char *stateToString(char state) {
     switch (state) {
-        case STOPPED:   return "PRONTO";
-        case WAITING_D1:  return "ESPERANDO D1";
-        case WAITING_D2:  return "ESPERANDO D2";
-        case RUNNING:     return "RODANDO";
-        case TERMINATED:  return "TERMINADO";
-        case READY:       return "PRONTO";
-        default:          return "DESCONHECIDO";
+        case STOPPED:      return "PRONTO";
+        case WAITING_FILE: return "ESPERANDO FILE";  // era WAITING_D1
+        case WAITING_DIR:  return "ESPERANDO DIR";   // era WAITING_D2
+        case RUNNING:      return "RODANDO";
+        case TERMINATED:   return "TERMINADO";
+        case READY:        return "PRONTO";
+        default:           return "DESCONHECIDO";
     }
 }
+
 
 static char normalizeDevice(char d) {
     if (d == '1' || d == '2') {
@@ -74,8 +75,8 @@ void doBriefing(void) {
                "Ultimo dispositivo acessado: %c\n"
                "Ultima operacao feita no dispositivo: %c\n"
                "PC: %d\n"
-               "Quantidade de vezes que acessou D1: %d\n"
-               "Quantidade de vezes que acessou D2: %d.\n\n",
+               "Quantidade de vezes que fez um request para file: %d\n"
+               "Quantidade de vezes que fez um request para dir: %d.\n\n",
                i + 1, (long)pid,
                stateToString(state),
                normalizeDevice(lastD),

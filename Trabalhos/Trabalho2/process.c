@@ -105,7 +105,68 @@ int main(int argc, char *argv[]) {
 
     // 5: Entra num while(Info->PC < MAX)
     while (info->PC < MAX) {
+        
+        // 1) CASO ESPECIAL: primeira iteração -> ADD diretório "teste" em "."
+        if (info->PC == 0) {
+            // Preenche Info com os parâmetros da syscall de diretório ADD
+            info->fs_kind = FS_KIND_DIR;      // 'D'
+            info->fs_op   = FS_OP_ADD;        // 'A'
+            strcpy(info->fs_path, ".");       // pai lógico
+            strcpy(info->fs_name, "teste");   // dirname
+            info->fs_offset = 0;
+            memset(info->fs_payload, 0, FS_PAYLOAD_SIZE);
 
+            // Monta mensagem "D, A" para a FIFO (mesmo formato do resto do código)
+            mensagem[0] = FS_KIND_DIR;  // 'D'
+            mensagem[1] = ',';          
+            mensagem[2] = ' ';
+            mensagem[3] = FS_OP_ADD;    // 'A'
+            mensagem[4] = '\0';
+
+            test = write(fifoan, mensagem, 5);
+            if (test != 5) {
+                perror("[Process]: Erro ao usar write em FIFOAN (ADD teste). Saindo...");
+                _exit(-50);
+            }
+
+            printf("[Processo %d]: syscall DIR ADD em \".\" criando \"teste\".\n",
+                processNumber);
+
+            info->PC++;
+            usleep(500000);
+            continue;  // pula o resto do loop (não sorteia d)
+        }
+
+        // 2) CASO ESPECIAL: segunda iteração -> WRITE em "teste/file0"
+        if (info->PC == 1) {
+            // Preenche Info com os parâmetros da syscall de arquivo WRITE
+            info->fs_kind   = FS_KIND_FILE;        // 'F'
+            info->fs_op     = FS_OP_WRITE;         // 'W'
+            strcpy(info->fs_path, "teste/file0");  // path lógico
+            info->fs_offset = 0;                   // começo do arquivo
+            geraPayload(info->fs_payload);         // 16 bytes aleatórios
+
+            // Monta mensagem "F, W" para a FIFO
+            mensagem[0] = FS_KIND_FILE;  // 'F'
+            mensagem[1] = ',';
+            mensagem[2] = ' ';
+            mensagem[3] = FS_OP_WRITE;   // 'W'
+            mensagem[4] = '\0';
+
+            test = write(fifoan, mensagem, 5);
+            if (test != 5) {
+                perror("[Process]: Erro ao usar write em FIFOAN (WRITE teste/file0). Saindo...");
+                _exit(-51);
+            }
+
+            printf("[Processo %d]: syscall FILE WRITE em \"teste/file0\", offset 0.\n",
+                processNumber);
+
+            info->PC++;
+            usleep(500000);
+            continue;  // pula sorteio de d
+        }
+        
         // 5.1: Dorme por 0.5s
         usleep(500000);
 
@@ -218,7 +279,7 @@ int main(int argc, char *argv[]) {
                     mensagem[0] = FS_KIND_DIR; // 'D'
                     mensagem[3] = FS_OP_REM;   // 'M'
                 }
-                
+
                 else {
                     // listdir
                     info->fs_op = FS_OP_LIST;  // 'L'

@@ -286,7 +286,8 @@ Fluxo de funcionamento de ICS:
 
 
 Fluxo de funcionamento de process:
-
+	
+	0: Cria um diretório teste em cada AX e um arquivo teste dentro deste diretorio
 
 	1: Dorme por 0.5s
 

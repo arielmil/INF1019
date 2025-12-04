@@ -21,17 +21,15 @@
 #include "fila.h"
 #include "sfp.h"
 
-// ======================================================================
+#define REPLY_QUEUE_MAX 64
+
 // Flags globais de IRQ, setadas pelos handlers de sinal
-// ======================================================================
 
 static volatile sig_atomic_t irq0Pending = 0;
 static volatile sig_atomic_t irq1Pending = 0;
 static volatile sig_atomic_t irq2Pending = 0;
 
-// ======================================================================
 // Dicionário PID -> processNumber (1..5)
-// ======================================================================
 
 typedef struct processDictionary {
     pid_t pid;
@@ -51,9 +49,7 @@ int getProcessNumber(pid_t pid, PD *pd) {
     exit(-21);
 }
 
-// ======================================================================
 // Handlers de sinal
-// ======================================================================
 
 void irq0Handler(int signum) {
     (void)signum;
@@ -73,11 +69,7 @@ void irq2Handler(int signum) {
     return;
 }
 
-// ======================================================================
 // Fila de respostas do SFSS (fileReplyQueue e dirReplyQueue)
-// ======================================================================
-
-#define REPLY_QUEUE_MAX 64
 
 typedef struct replyQueue {
     SFPMessage msgs[REPLY_QUEUE_MAX];
@@ -117,9 +109,7 @@ static int popReply(ReplyQueue *q, SFPMessage *m) {
     return 0;
 }
 
-// ======================================================================
 // Poll de respostas do SFSS (recvfrom não bloqueante)
-// ======================================================================
 
 static void pollSFSSReplies(int sockfd, ReplyQueue *fileQ, ReplyQueue *dirQ) {
     SFPMessage msg;
@@ -160,10 +150,7 @@ static void pollSFSSReplies(int sockfd, ReplyQueue *fileQ, ReplyQueue *dirQ) {
     }
 }
 
-// ======================================================================
 // main
-// ======================================================================
-
 int main(void) {
     char bufferD, bufferOp;
     char bufferan[5];
@@ -191,7 +178,7 @@ int main(void) {
 
     Info *info[5];
 
-    // ---- Socket UDP para falar com o SFSS ----
+    // Socket UDP para falar com o SFSS
     int sockfd;
     struct sockaddr_in sfss_addr;
     socklen_t sfss_addrlen = sizeof(sfss_addr);
@@ -326,7 +313,7 @@ int main(void) {
     signal(IRQ1, irq1Handler);
     signal(IRQ2, irq2Handler);
 
-    // ---- Inicializa socket UDP cliente para falar com SFSS ----
+    // Inicializa socket UDP cliente para falar com SFSS
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("[KernelSim]: Erro ao abrir socket UDP para SFSS. Saindo...");
@@ -339,7 +326,7 @@ int main(void) {
     // SFSS rodando na mesma máquina (localhost)
     sfss_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
-    // ---- Filas de escalonamento e de espera ----
+    // Filas de escalonamento e de espera
     Fila ready;
     Fila waitingFile; // processos esperando operação de arquivo
     Fila waitingDir;  // processos esperando operação de diretório
@@ -369,7 +356,6 @@ int main(void) {
 
     // A partir daqui, escalona
     pid_t currentProcess;
-    pid_t syscalledProcess;
 
     Info *currentInfo;
     Info *syscalledInfo;
@@ -384,18 +370,26 @@ int main(void) {
 
             // 9.1.1.2: trata IRQ1 / IRQ2, entregando respostas aos processos
             if (irq1Pending) {
+
                 if (!emptyReplyQueue(&fileReplyQueue)) {
+
                     SFPMessage reply;
+
                     if (popReply(&fileReplyQueue, &reply) == 0) {
+
                         int owner = reply.hdr.owner; // 1..5
                         syscalledInfo = info[owner - 1];
 
                         // Copia dados de retorno de arquivo para Info[owner]
                         if (reply.hdr.type == SFP_RD_REP) {
+
                             // payload lido e offset de retorno
                             memcpy(syscalledInfo->fs_payload, reply.rd_rep.payload, FS_PAYLOAD_SIZE);
                             syscalledInfo->fs_offset = reply.rd_rep.offset;
-                        } else if (reply.hdr.type == SFP_WR_REP) {
+
+                        } 
+                        
+                        else if (reply.hdr.type == SFP_WR_REP) {
                             // poderíamos guardar novo EOF em fs_offset
                             syscalledInfo->fs_offset = reply.wr_rep.offset;
                         }
@@ -404,14 +398,19 @@ int main(void) {
                             syscalledInfo->state = READY;
                             push(&ready, syscalledInfo->pid);
                         }
+
                     }
                 }
+
                 irq1Pending = 0;
             }
 
             if (irq2Pending) {
+                
                 if (!emptyReplyQueue(&dirReplyQueue)) {
+                    
                     SFPMessage reply;
+                    
                     if (popReply(&dirReplyQueue, &reply) == 0) {
                         int owner = reply.hdr.owner; // 1..5
                         syscalledInfo = info[owner - 1];
@@ -423,6 +422,7 @@ int main(void) {
                             syscalledInfo->state = READY;
                             push(&ready, syscalledInfo->pid);
                         }
+
                     }
                 }
                 irq2Pending = 0;
@@ -458,6 +458,7 @@ int main(void) {
             test = read(fifoan, bufferan, 5);
 
             if (test <= 0) {
+                
                 if (errno == EAGAIN || errno == EWOULDBLOCK || test == 0) {
                     // Nenhuma syscall nessa iteração
                     continue;
@@ -465,6 +466,7 @@ int main(void) {
 
                 perror("[KernelSim]: Erro ao tentar dar read na FIFOAN. Saindo...");
                 exit(-37);
+
             }
 
             // Se chegou aqui, recebeu mensagem de syscall (5 bytes)
@@ -501,7 +503,10 @@ int main(void) {
                         perror("[KernelSim]: Erro em sendto (RD-REQ). Saindo...");
                         exit(-61);
                     }
-                } else if (bufferOp == FS_OP_WRITE) {
+
+                } 
+                
+                else if (bufferOp == FS_OP_WRITE) {
                     req.wr_req.hdr.type  = SFP_WR_REQ;
                     req.wr_req.hdr.owner = getProcessNumber(currentProcess, pd); // 1..5
 
@@ -517,7 +522,11 @@ int main(void) {
                         perror("[KernelSim]: Erro em sendto (WR-REQ). Saindo...");
                         exit(-62);
                     }
-                } else {
+
+
+                } 
+                
+                else {
                     fprintf(stderr, "[KernelSim]: Operação de arquivo desconhecida: %c\n", bufferOp);
                     exit(-63);
                 }
@@ -561,7 +570,10 @@ int main(void) {
                         perror("[KernelSim]: Erro em sendto (DC-REQ). Saindo...");
                         exit(-64);
                     }
-                } else if (bufferOp == FS_OP_REM) {
+
+                } 
+                
+                else if (bufferOp == FS_OP_REM) {
                     req.dr_req.hdr.type  = SFP_DR_REQ;
                     req.dr_req.hdr.owner = getProcessNumber(currentProcess, pd);
 
@@ -578,7 +590,10 @@ int main(void) {
                         perror("[KernelSim]: Erro em sendto (DR-REQ). Saindo...");
                         exit(-65);
                     }
-                } else if (bufferOp == FS_OP_LIST) {
+
+                } 
+                
+                else if (bufferOp == FS_OP_LIST) {
                     req.dl_req.hdr.type  = SFP_DL_REQ;
                     req.dl_req.hdr.owner = getProcessNumber(currentProcess, pd);
 
@@ -591,7 +606,9 @@ int main(void) {
                         perror("[KernelSim]: Erro em sendto (DL-REQ). Saindo...");
                         exit(-66);
                     }
-                } else {
+                } 
+                
+                else {
                     fprintf(stderr, "[KernelSim]: Operação de diretório desconhecida: %c\n", bufferOp);
                     exit(-67);
                 }
@@ -638,8 +655,11 @@ int main(void) {
 
         // 9.1.5.3: Trata IRQ1 (entrega de respostas de arquivo)
         if (irq1Pending) {
+
             if (!emptyReplyQueue(&fileReplyQueue)) {
+
                 SFPMessage reply;
+
                 if (popReply(&fileReplyQueue, &reply) == 0) {
                     int owner = reply.hdr.owner;
                     syscalledInfo = info[owner - 1];
@@ -647,7 +667,9 @@ int main(void) {
                     if (reply.hdr.type == SFP_RD_REP) {
                         memcpy(syscalledInfo->fs_payload, reply.rd_rep.payload, FS_PAYLOAD_SIZE);
                         syscalledInfo->fs_offset = reply.rd_rep.offset;
-                    } else if (reply.hdr.type == SFP_WR_REP) {
+                    } 
+                    
+                    else if (reply.hdr.type == SFP_WR_REP) {
                         syscalledInfo->fs_offset = reply.wr_rep.offset;
                     }
 
@@ -655,15 +677,20 @@ int main(void) {
                         syscalledInfo->state = READY;
                         push(&ready, syscalledInfo->pid);
                     }
+
                 }
+
             }
             irq1Pending = 0;
         }
 
         // 9.1.5.4: Trata IRQ2 (entrega de respostas de diretório)
         if (irq2Pending) {
+            
             if (!emptyReplyQueue(&dirReplyQueue)) {
+                
                 SFPMessage reply;
+                
                 if (popReply(&dirReplyQueue, &reply) == 0) {
                     int owner = reply.hdr.owner;
                     syscalledInfo = info[owner - 1];
@@ -675,6 +702,7 @@ int main(void) {
                         push(&ready, syscalledInfo->pid);
                     }
                 }
+
             }
             irq2Pending = 0;
         }

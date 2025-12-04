@@ -107,7 +107,7 @@ static void trata_rd_req(int sockfd,SFPReadReq *req,
             } 
             
             else {
-                
+
                 // Sucesso (mesmo que n < 16, rep.payload fica com n bytes lidos)
                 rep.offset = req->offset;
             }
@@ -131,8 +131,8 @@ static void trata_wr_req(int sockfd,
     SFPWriteRep rep;
     char fullpath[512];
     int fd;
-    ssize_t n;
-    off_t off;
+    ssize_t n = 0;
+    off_t off = 0;
 
     memset(&rep, 0, sizeof(rep));
 
@@ -146,22 +146,31 @@ static void trata_wr_req(int sockfd,
     monta_caminho_fisico(fullpath, sizeof(fullpath), rootdir,
                          req->hdr.owner, req->path);
 
+    // LOG: info da requisição
+    printf("[SFSS WR] owner=%d path=\"%s\" full=\"%s\" offset=%ld -> ",
+           req->hdr.owner, req->path, fullpath, (long)req->offset);
+    fflush(stdout);
+
     // Abre arquivo para escrita (cria se não existir)
     fd = open(fullpath, O_WRONLY | O_CREAT, 0666);
+
     if (fd < 0) {
         // Erro ao abrir
         rep.offset = -1;
+        perror("open");
+        printf("\n");
     } 
-    
+
     else {
 
         // Vai até o offset solicitado
         off = lseek(fd, req->offset, SEEK_SET);
-        
         if (off < 0) {
             rep.offset = -2; // erro em lseek
+            perror("lseek");
+            printf("\n");
         } 
-        
+
         else {
 
             // Escreve 16 bytes
@@ -169,13 +178,14 @@ static void trata_wr_req(int sockfd,
 
             if (n < 0) {
                 rep.offset = -3; // erro em write
+                perror("write");
+                printf("\n");
             } 
-            
-            else {
 
-                // Sucesso: podemos devolver novo EOF ou offset escrito.
-                // Aqui vou devolver (offset + 16) como "new EOF aproximado".
+            else {
+                // Sucesso: devolve offset+16 como "novo EOF aproximado"
                 rep.offset = req->offset + SFP_PAYLOAD_SIZE;
+                printf("OK (novo offset ~ %ld)\n", (long)rep.offset);
             }
         }
 
@@ -185,7 +195,8 @@ static void trata_wr_req(int sockfd,
     // Opcional: copiar payload escrito de volta
     memcpy(rep.payload, req->payload, SFP_PAYLOAD_SIZE);
 
-    if (sendto(sockfd, &rep, sizeof(rep), 0, (struct sockaddr *) clientaddr, clientlen) < 0) {
+    if (sendto(sockfd, &rep, sizeof(rep), 0,
+               (struct sockaddr *) clientaddr, clientlen) < 0) {
         error("ERROR in sendto (WR-REP)");
     }
 }
@@ -213,17 +224,25 @@ static void trata_dc_req(int sockfd,
     snprintf(fullpath, sizeof(fullpath), "%s/%s", parentPath, req->dirname);
     fullpath[sizeof(fullpath) - 1] = '\0';
 
+    // LOG: info da requisição de diretório
+    printf("[SFSS DC] owner=%d path=\"%s\" dirname=\"%s\" full=\"%s\" -> ",
+           req->hdr.owner, req->path, req->dirname, fullpath);
+    fflush(stdout);
+
     // Tenta criar diretório
     if (mkdir(fullpath, 0777) < 0) {
         rep.strlen_path = -1;
         rep.path[0] = '\0';
+        perror("mkdir");
+        printf("\n");
     } 
-    
+
     else {
+
+        printf("OK\n");
 
         // Monta o path lógico de volta: path + "/" + dirname
         if (req->strlen_path <= 0 || strcmp(req->path, ".") == 0) {
-
             // Se o path era vazio ou ".", o novo path lógico é só "dirname"
             strncpy(rep.path, req->dirname, SFP_PATH_MAX);
         } 
@@ -236,7 +255,8 @@ static void trata_dc_req(int sockfd,
         rep.strlen_path = (int) strlen(rep.path);
     }
 
-    if (sendto(sockfd, &rep, sizeof(rep), 0, (struct sockaddr *) clientaddr, clientlen) < 0) {
+    if (sendto(sockfd, &rep, sizeof(rep), 0,
+               (struct sockaddr *) clientaddr, clientlen) < 0) {
         error("ERROR in sendto (DC-REP)");
     }
 }
@@ -472,7 +492,17 @@ int main(int argc, char **argv) {
         int type  = msg.hdr.type;
         int owner = msg.hdr.owner;
 
-        printf("SFSS recebeu mensagem type=%d owner=%d (bytes=%zd)\n", type, owner, n);
+        
+        const char *tname = "UNKNOWN";
+        switch (type) {
+            case SFP_RD_REQ: tname = "RD-REQ (FILE READ)"; break;
+            case SFP_WR_REQ: tname = "WR-REQ (FILE WRITE)"; break;
+            case SFP_DC_REQ: tname = "DC-REQ (DIR ADD)"; break;
+            case SFP_DR_REQ: tname = "DR-REQ (DIR REM)"; break;
+            case SFP_DL_REQ: tname = "DL-REQ (DIR LIST)"; break;
+        }
+
+        printf("SFSS recebeu %s de owner=%d (bytes=%zd)\n", tname, owner, n);
 
         switch (type) {
 
