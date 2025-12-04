@@ -126,7 +126,9 @@ static void pollSFSSReplies(int sockfd, ReplyQueue *fileQ, ReplyQueue *dirQ) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Nenhuma mensagem pendente
                 break;
-            } else {
+            } 
+            
+            else {
                 perror("[KernelSim]: Erro em recvfrom ao ler resposta do SFSS. Saindo...");
                 exit(-50);
             }
@@ -140,11 +142,13 @@ static void pollSFSSReplies(int sockfd, ReplyQueue *fileQ, ReplyQueue *dirQ) {
         // Classifica resposta como de arquivo ou de diretório
         if (msg.hdr.type == SFP_RD_REP || msg.hdr.type == SFP_WR_REP) {
             pushReply(fileQ, &msg);
-        } else if (msg.hdr.type == SFP_DC_REP ||
-                   msg.hdr.type == SFP_DR_REP ||
-                   msg.hdr.type == SFP_DL_REP) {
+        } 
+        
+        else if (msg.hdr.type == SFP_DC_REP || msg.hdr.type == SFP_DR_REP || msg.hdr.type == SFP_DL_REP) {
             pushReply(dirQ, &msg);
-        } else {
+        } 
+        
+        else {
             fprintf(stderr, "[KernelSim]: Resposta SFSS com tipo desconhecido: %d\n", msg.hdr.type);
         }
     }
@@ -362,7 +366,7 @@ int main(void) {
 
     while (terminatedProcessess < 5) {
 
-        // 9.1.1: enquanto ready estiver vazia, trata apenas IRQ1/IRQ2 + respostas SFSS
+        // 9.1.1: enquanto ready estiver vazia, trata apenas IRQ1/IRQ2 + respostas SFSS, pois não foi colocada aqui por IRQ0
         while (empty(&ready)) {
 
             // 9.1.1.1: checagem não bloqueante por respostas do SFSS
@@ -469,7 +473,7 @@ int main(void) {
 
             }
 
-            // Se chegou aqui, recebeu mensagem de syscall (5 bytes)
+            // Se chegou aqui, recebeu mensagem de syscall de algum AN
             bufferD = bufferan[0]; // 'F' ou 'D'
             bufferOp = bufferan[3]; // 'R','W','A','M','L'
 
@@ -477,6 +481,7 @@ int main(void) {
             currentInfo->lastD = bufferD;
             currentInfo->lastOp = bufferOp;
 
+            // Se AN quer fazer alguma operação em file
             if (bufferD == FS_KIND_FILE) {
                 // Operação de arquivo: read/write
 
@@ -487,6 +492,7 @@ int main(void) {
                 SFPMessage req;
                 memset(&req, 0, sizeof(req));
 
+                // Passa um request para sfss para ler de um file
                 if (bufferOp == FS_OP_READ) {
                     req.rd_req.hdr.type  = SFP_RD_REQ;
                     req.rd_req.hdr.owner = getProcessNumber(currentProcess, pd); // 1..5
@@ -506,6 +512,7 @@ int main(void) {
 
                 } 
                 
+                // Passa um request para sfss para escrever em um file
                 else if (bufferOp == FS_OP_WRITE) {
                     req.wr_req.hdr.type  = SFP_WR_REQ;
                     req.wr_req.hdr.owner = getProcessNumber(currentProcess, pd); // 1..5
@@ -544,6 +551,7 @@ int main(void) {
                 break;
             }
 
+            // Se AN quer fazer alguma operação em diretorios
             else if (bufferD == FS_KIND_DIR) {
                 // Operação de diretório: add/rem/listdir
 
@@ -553,6 +561,7 @@ int main(void) {
                 SFPMessage req;
                 memset(&req, 0, sizeof(req));
 
+                // Passa um request para sfss criar um novo dir
                 if (bufferOp == FS_OP_ADD) {
                     req.dc_req.hdr.type  = SFP_DC_REQ;
                     req.dc_req.hdr.owner = getProcessNumber(currentProcess, pd);
@@ -573,6 +582,7 @@ int main(void) {
 
                 } 
                 
+                // Passa um request para sfss remover um dir
                 else if (bufferOp == FS_OP_REM) {
                     req.dr_req.hdr.type  = SFP_DR_REQ;
                     req.dr_req.hdr.owner = getProcessNumber(currentProcess, pd);
@@ -593,6 +603,7 @@ int main(void) {
 
                 } 
                 
+                // Passa um request para sfss listar diretorios
                 else if (bufferOp == FS_OP_LIST) {
                     req.dl_req.hdr.type  = SFP_DL_REQ;
                     req.dl_req.hdr.owner = getProcessNumber(currentProcess, pd);
@@ -613,6 +624,7 @@ int main(void) {
                     exit(-67);
                 }
 
+                // Seja qual request for, da um push para waitingDir
                 push(&waitingDir, currentProcess);
 
                 test = kill(currentProcess, SIGSTOP);
@@ -660,6 +672,7 @@ int main(void) {
 
                 SFPMessage reply;
 
+                // Popa um reply do sfss para tratar
                 if (popReply(&fileReplyQueue, &reply) == 0) {
                     int owner = reply.hdr.owner;
                     syscalledInfo = info[owner - 1];
@@ -672,7 +685,8 @@ int main(void) {
                     else if (reply.hdr.type == SFP_WR_REP) {
                         syscalledInfo->fs_offset = reply.wr_rep.offset;
                     }
-
+                    
+                    // Está pronto para ser escalonado novamente
                     if (syscalledInfo->state == WAITING_FILE) {
                         syscalledInfo->state = READY;
                         push(&ready, syscalledInfo->pid);
@@ -690,13 +704,15 @@ int main(void) {
             if (!emptyReplyQueue(&dirReplyQueue)) {
                 
                 SFPMessage reply;
-                
+
+                // Popa um reply do sfss para tratar
                 if (popReply(&dirReplyQueue, &reply) == 0) {
                     int owner = reply.hdr.owner;
                     syscalledInfo = info[owner - 1];
 
                     // (Copiar campos de diretório, se desejado)
 
+                    // Está pronto para ser escalonado novamente
                     if (syscalledInfo->state == WAITING_DIR) {
                         syscalledInfo->state = READY;
                         push(&ready, syscalledInfo->pid);
@@ -709,6 +725,8 @@ int main(void) {
 
         // 9.1.5.5: Se processo apenas parou por IRQ0 (STOPPED) e não TERMINATED, volta pra ready
         if (currentInfo->state != TERMINATED && currentInfo->state == STOPPED) {
+
+            // Está pronto para ser escalonado novamente
             push(&ready, currentProcess);
             currentInfo->state = READY;
         }

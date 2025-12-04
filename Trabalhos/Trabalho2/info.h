@@ -5,7 +5,7 @@
 
 // Limites gerais
 
-#define MAX 10   // Máximo de "instruções" (PC < MAX) por processo
+#define MAX 100   // Máximo de "instruções" (PC < MAX) por processo
 
 // Estados possíveis de um processo
 
